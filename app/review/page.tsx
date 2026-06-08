@@ -11,7 +11,8 @@ type Draft = {
   topic: string;
   format: string;
   platform: string;
-  imageDataUrl?: string | null;
+  images?: string[] | null;
+  imageDataUrl?: string | null;  // legacy / backward compat
   videoMeta?: { name: string; size: number; type: string } | null;
 };
 
@@ -179,37 +180,22 @@ export default function ReviewPage() {
     setSaving(true);
     try {
       const finalContent = buildFinalContent();
+      const mediaPayload = {
+        images: draft.images ?? null,
+        imageDataUrl: draft.images?.[0] ?? draft.imageDataUrl ?? null,
+        videoMeta: draft.videoMeta ?? null,
+      };
       if (draft.id) {
-        // Editing an existing post — PATCH it
         await fetch("/api/posts", {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            id: draft.id,
-            content: finalContent,
-            topic: draft.topic,
-            format: draft.format,
-            platform: draft.platform,
-            status: "approved",
-            imageDataUrl: draft.imageDataUrl ?? null,
-            videoMeta: draft.videoMeta ?? null,
-          }),
+          body: JSON.stringify({ id: draft.id, content: finalContent, topic: draft.topic, format: draft.format, platform: draft.platform, status: "approved", ...mediaPayload }),
         });
       } else {
-        // New post — POST it
         await fetch("/api/posts", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            content: finalContent,
-            topic: draft.topic,
-            format: draft.format,
-            platform: draft.platform,
-            status: "approved",
-            scheduledDate: null,
-            imageDataUrl: draft.imageDataUrl ?? null,
-            videoMeta: draft.videoMeta ?? null,
-          }),
+          body: JSON.stringify({ content: finalContent, topic: draft.topic, format: draft.format, platform: draft.platform, status: "approved", scheduledDate: null, ...mediaPayload }),
         });
       }
       setApproved(true);
@@ -316,7 +302,8 @@ export default function ReviewPage() {
                     topic: draft.topic,
                     format: draft.format,
                     platform: draft.platform,
-                    imageDataUrl: draft.imageDataUrl ?? null,
+                    images: draft.images ?? null,
+                    imageDataUrl: draft.images?.[0] ?? draft.imageDataUrl ?? null,
                   }));
                   router.push("/generate");
                 }}

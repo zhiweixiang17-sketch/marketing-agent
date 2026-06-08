@@ -15,7 +15,8 @@ type Post = {
   status: "draft" | "approved" | "published";
   scheduledDate: string | null;
   createdAt: string;
-  imageDataUrl?: string | null;
+  images?: string[] | null;
+  imageDataUrl?: string | null;   // legacy single-photo compat
   videoMeta?: { name: string; size: number; type: string } | null;
 };
 
@@ -257,17 +258,32 @@ function PostDetailModal({ post, onClose, onMarkPublished, onPublishToMeta }: {
 
           {/* Content */}
 
-          {/* Image — full image visible, no cropping */}
-          {post.imageDataUrl && (
+          {/* Images */}
+          {(post.images?.length ?? 0) > 1 ? (
+            /* Multiple photos — grid */
+            <div className="p-3 border-b border-gray-200 bg-gray-50">
+              <div className="grid grid-cols-3 gap-1.5">
+                {post.images!.map((src, idx) => (
+                  <div key={idx} className="relative aspect-square rounded-lg overflow-hidden bg-gray-100">
+                    <img src={src} alt={`Photo ${idx + 1}`} className="w-full h-full object-cover" />
+                    {idx === 0 && (
+                      <span className="absolute top-1 left-1 text-[9px] font-bold uppercase bg-[#0F6E56] text-white px-1 py-0.5 rounded">Cover</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (post.images?.[0] ?? post.imageDataUrl) ? (
+            /* Single photo — full-width contained */
             <div className="bg-gray-100 border-b border-gray-200 flex items-center justify-center" style={{ maxHeight: "45vh" }}>
               <img
-                src={post.imageDataUrl}
+                src={(post.images?.[0] ?? post.imageDataUrl)!}
                 alt="Post photo"
                 className="w-full h-full object-contain"
                 style={{ maxHeight: "45vh" }}
               />
             </div>
-          )}
+          ) : null}
 
           {/* Text below the image */}
           {defs && sections ? (
@@ -371,10 +387,15 @@ function PostCard({ post, onDoubleClick, onMarkPublished, onPublishToMeta }: {
       title="Double-click to view full post"
       className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden flex flex-col hover:shadow-md hover:border-gray-300 transition-all duration-200 cursor-pointer select-none group"
     >
-      {/* Photo thumbnail */}
-      {post.imageDataUrl && (
-        <div className="aspect-video overflow-hidden bg-gray-100 shrink-0">
-          <img src={post.imageDataUrl} alt="" className="w-full h-full object-cover group-hover:scale-[1.02] transition-transform duration-300" />
+      {/* Photo thumbnail — show first image (cover) */}
+      {(post.images?.[0] ?? post.imageDataUrl) && (
+        <div className="aspect-video overflow-hidden bg-gray-100 shrink-0 relative">
+          <img src={(post.images?.[0] ?? post.imageDataUrl)!} alt="" className="w-full h-full object-cover group-hover:scale-[1.02] transition-transform duration-300" />
+          {(post.images?.length ?? 0) > 1 && (
+            <span className="absolute bottom-2 right-2 bg-black/60 text-white text-[10px] font-semibold px-1.5 py-0.5 rounded">
+              +{post.images!.length - 1} more
+            </span>
+          )}
         </div>
       )}
 

@@ -96,105 +96,205 @@ async function compressImage(dataUrl: string, maxDim = 1200, quality = 0.82): Pr
   });
 }
 
-// ── Unified media upload (photo OR video, all formats) ───────────────────────
+// ── Multi-image grid with drag-to-reorder ────────────────────────────────────
 
-type MediaState = {
-  imageDataUrl: string | null;
+function MultiImageGrid({ images, onRemove, onReorder }: {
+  images: string[];
+  onRemove: (idx: number) => void;
+  onReorder: (from: number, to: number) => void;
+}) {
+  const [dragIdx, setDragIdx]     = useState<number | null>(null);
+  const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
+
+  function handleDragStart(e: React.DragEvent, idx: number) {
+    e.dataTransfer.effectAllowed = "move";
+    setDragIdx(idx);
+  }
+  function handleDragOver(e: React.DragEvent, idx: number) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    if (idx !== dragIdx) setDragOverIdx(idx);
+  }
+  function handleDrop(e: React.DragEvent, toIdx: number) {
+    e.preventDefault();
+    if (dragIdx !== null && dragIdx !== toIdx) onReorder(dragIdx, toIdx);
+    setDragIdx(null); setDragOverIdx(null);
+  }
+  function handleDragEnd() { setDragIdx(null); setDragOverIdx(null); }
+
+  return (
+    <div className="grid grid-cols-3 gap-2">
+      {images.map((img, idx) => (
+        <div
+          key={idx}
+          draggable
+          onDragStart={(e) => handleDragStart(e, idx)}
+          onDragOver={(e) => handleDragOver(e, idx)}
+          onDrop={(e) => handleDrop(e, idx)}
+          onDragEnd={handleDragEnd}
+          className={`relative group rounded-xl overflow-hidden aspect-square cursor-grab border-2 transition-all select-none ${
+            dragIdx === idx ? "opacity-40 scale-95" : ""
+          } ${dragOverIdx === idx && dragIdx !== idx ? "border-[#0F6E56] ring-2 ring-[#0F6E56]/20" : "border-transparent"}`}
+        >
+          <img src={img} alt={`Photo ${idx + 1}`} className="w-full h-full object-cover" draggable={false} />
+          {/* Cover / number badge */}
+          {idx === 0 ? (
+            <span className="absolute top-1.5 left-1.5 text-[9px] font-bold uppercase tracking-wider bg-[#0F6E56] text-white px-1.5 py-0.5 rounded shadow-sm">
+              Cover
+            </span>
+          ) : (
+            <span className="absolute top-1.5 left-1.5 text-[9px] font-bold bg-black/50 text-white px-1.5 py-0.5 rounded">
+              {idx + 1}
+            </span>
+          )}
+          {/* Remove button */}
+          <button
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); onRemove(idx); }}
+            className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/60 hover:bg-black/85 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity text-white"
+          >
+            <svg width="7" height="7" viewBox="0 0 7 7" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+              <path d="M1 1l5 5M6 1L1 6" />
+            </svg>
+          </button>
+          {/* Drag hint */}
+          <div className="absolute inset-x-0 bottom-0 py-1 flex justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-gradient-to-t from-black/40 to-transparent">
+            <span className="text-[9px] text-white/90">drag to reorder</span>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── Unified media upload (multi-photo OR video) ───────────────────────────────
+
+function MediaUpload({ images, videoFile, videoObjectUrl, onAddImages, onRemoveImage, onReorderImages, onVideo, onClearMedia }: {
+  images: string[];
   videoFile: File | null;
   videoObjectUrl: string | null;
-};
-
-function MediaUpload({ media, onImage, onVideo, onRemove }: {
-  media: MediaState;
-  onImage: (dataUrl: string) => void;
+  onAddImages: (next: string[]) => void;
+  onRemoveImage: (idx: number) => void;
+  onReorderImages: (from: number, to: number) => void;
   onVideo: (file: File, url: string) => void;
-  onRemove: () => void;
+  onClearMedia: () => void;
 }) {
-  const [dragging, setDragging]     = useState(false);
+  const [dragging, setDragging]       = useState(false);
   const [compressing, setCompressing] = useState(false);
+  const [error, setError]             = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  async function handleFile(file: File) {
-    const isImage = file.type.startsWith("image/");
-    const isVideo = file.type.startsWith("video/") || /\.(mp4|mov|m4v|avi|webm|mkv)$/i.test(file.name);
-
-    if (isImage) {
-      if (file.size > 20 * 1024 * 1024) { alert("Please choose an image under 20 MB."); return; }
-      setCompressing(true);
-      const reader = new FileReader();
-      reader.onload = async (e) => {
-        const compressed = await compressImage(e.target?.result as string);
-        onImage(compressed);
-        setCompressing(false);
-      };
-      reader.readAsDataURL(file);
-    } else if (isVideo) {
-      if (file.size > 100 * 1024 * 1024) { alert("Please choose a video under 100 MB."); return; }
-      onVideo(file, URL.createObjectURL(file));
-    } else {
-      alert("Please upload an image or video file.");
-    }
-  }
-
-  // ── Previews ──
-  if (media.imageDataUrl) {
-    return (
-      <div className="relative rounded-xl overflow-hidden border border-gray-200 group">
-        <img src={media.imageDataUrl} alt="Uploaded" className="w-full max-h-52 object-contain bg-gray-50" />
-        <button onClick={onRemove}
-          className="absolute top-2 right-2 w-7 h-7 bg-black/50 hover:bg-black/70 rounded-full flex items-center justify-center text-white transition-colors"
-          title="Remove photo">
-          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-            <path d="M2 2l8 8M10 2L2 10" />
-          </svg>
-        </button>
-      </div>
+  async function processFiles(rawFiles: FileList | File[]) {
+    const files = Array.from(rawFiles);
+    // If a video is dropped/selected and no images exist yet, treat as video upload
+    const videoCandidate = files.find(
+      f => f.type.startsWith("video/") || /\.(mp4|mov|m4v|avi|webm|mkv)$/i.test(f.name)
     );
+    if (videoCandidate && images.length === 0) {
+      if (videoCandidate.size > 100 * 1024 * 1024) { setError("Please choose a video under 100 MB."); return; }
+      setError(null);
+      onVideo(videoCandidate, URL.createObjectURL(videoCandidate));
+      return;
+    }
+
+    const imgFiles = files.filter(f => f.type.startsWith("image/"));
+    if (imgFiles.length === 0) { setError("Please upload image or video files."); return; }
+
+    const remaining = 10 - images.length;
+    if (remaining <= 0) { setError("Maximum 10 photos reached."); return; }
+    const toProcess = imgFiles.slice(0, remaining);
+    if (imgFiles.length > remaining) {
+      setError(`Max 10 photos — only the first ${remaining} will be added.`);
+    } else {
+      setError(null);
+    }
+
+    setCompressing(true);
+    const compressed = await Promise.all(
+      toProcess.map(file => new Promise<string>((resolve) => {
+        const reader = new FileReader();
+        reader.onload = async (e) => resolve(await compressImage(e.target?.result as string));
+        reader.readAsDataURL(file);
+      }))
+    );
+    onAddImages(compressed);
+    setCompressing(false);
   }
 
-  if (media.videoObjectUrl && media.videoFile) {
+  // ── Video preview ──
+  if (videoObjectUrl && videoFile) {
     return (
       <div className="rounded-xl overflow-hidden border border-gray-200">
-        <video src={media.videoObjectUrl} className="w-full max-h-52 bg-black" controls muted playsInline />
+        <video src={videoObjectUrl} className="w-full max-h-52 bg-black" controls muted playsInline />
         <div className="flex items-center justify-between px-3 py-2 bg-gray-50 border-t border-gray-200">
-          <span className="text-xs text-gray-500 truncate mr-2">{media.videoFile.name}</span>
-          <button onClick={onRemove} className="text-xs text-red-500 hover:text-red-700 shrink-0">Remove</button>
+          <span className="text-xs text-gray-500 truncate mr-2">{videoFile.name}</span>
+          <button onClick={onClearMedia} className="text-xs text-red-500 hover:text-red-700 shrink-0">Remove</button>
         </div>
       </div>
     );
   }
 
-  // ── Drop zone ──
+  // ── Photo grid + add-more zone ──
   return (
-    <div
-      onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
-      onDragLeave={() => setDragging(false)}
-      onDrop={(e) => { e.preventDefault(); setDragging(false); const f = e.dataTransfer.files[0]; if (f) handleFile(f); }}
-      onClick={() => !compressing && inputRef.current?.click()}
-      className={`border-2 border-dashed rounded-xl p-5 text-center cursor-pointer transition-all ${
-        dragging ? "border-[#0F6E56] bg-[#E8F5F1]" : "border-gray-200 hover:border-gray-300 hover:bg-gray-50"
-      } ${compressing ? "cursor-wait" : ""}`}>
-      <input ref={inputRef} type="file" accept="image/*,video/*,.mp4,.mov,.m4v" className="hidden"
-        onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }} />
-      <div className="flex flex-col items-center gap-2">
-        {compressing ? (
-          <><Spinner className="h-5 w-5" /><p className="text-sm text-gray-500">Optimising…</p></>
-        ) : (
-          <>
-            <div className="flex items-center gap-2 text-gray-300">
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 001.5-1.5V6a1.5 1.5 0 00-1.5-1.5H3.75A1.5 1.5 0 002.25 6v12a1.5 1.5 0 001.5 1.5z" />
-              </svg>
-              <span className="text-gray-300 text-lg">/</span>
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z" />
-              </svg>
+    <div className="space-y-2">
+      {images.length > 0 && (
+        <MultiImageGrid images={images} onRemove={onRemoveImage} onReorder={onReorderImages} />
+      )}
+
+      {error && (
+        <p className="text-xs text-red-500 flex items-start gap-1">
+          <span className="shrink-0">⚠</span>{error}
+        </p>
+      )}
+
+      {images.length < 10 ? (
+        <div
+          onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={(e) => { e.preventDefault(); setDragging(false); processFiles(e.dataTransfer.files); }}
+          onClick={() => !compressing && inputRef.current?.click()}
+          className={`border-2 border-dashed rounded-xl text-center cursor-pointer transition-all ${
+            images.length > 0 ? "py-3" : "py-6"
+          } ${dragging ? "border-[#0F6E56] bg-[#E8F5F1]" : "border-gray-200 hover:border-gray-300 hover:bg-gray-50"} ${
+            compressing ? "cursor-wait" : ""
+          }`}
+        >
+          <input
+            ref={inputRef}
+            type="file"
+            accept="image/*,video/*,.mp4,.mov,.m4v"
+            multiple
+            className="hidden"
+            onChange={(e) => { if (e.target.files) processFiles(e.target.files); e.target.value = ""; }}
+          />
+          {compressing ? (
+            <div className="flex items-center justify-center gap-2 px-4">
+              <Spinner className="h-4 w-4" /><span className="text-sm text-gray-500">Optimising…</span>
             </div>
-            <p className="text-sm text-gray-500">Photo or video · drag & drop or click</p>
-            <p className="text-xs text-gray-400">JPG, PNG, MP4, MOV · image up to 20 MB · video up to 100 MB</p>
-          </>
-        )}
-      </div>
+          ) : images.length > 0 ? (
+            <p className="text-sm font-medium text-[#0F6E56] px-4">
+              + Add more photos <span className="text-gray-400 font-normal">({images.length}/10)</span>
+            </p>
+          ) : (
+            <div className="flex flex-col items-center gap-2 px-4">
+              <div className="flex gap-2 text-gray-300">
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 001.5-1.5V6a1.5 1.5 0 00-1.5-1.5H3.75A1.5 1.5 0 002.25 6v12a1.5 1.5 0 001.5 1.5z" />
+                </svg>
+                <span className="text-gray-200 text-xl leading-6">·</span>
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z" />
+                </svg>
+              </div>
+              <p className="text-sm text-gray-500">Photos or video · drag & drop or click</p>
+              <p className="text-xs text-gray-400">Up to 10 photos · JPG PNG HEIC · 20 MB each<br/>or 1 video · MP4 MOV · 100 MB</p>
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="rounded-xl bg-gray-50 border border-gray-200 px-4 py-3 text-center">
+          <p className="text-xs text-gray-500">10 photos added — maximum reached.</p>
+        </div>
+      )}
     </div>
   );
 }
@@ -461,7 +561,7 @@ export default function GeneratePage() {
   const [phase, setPhase] = useState<Phase>("idle");
   const [error, setError] = useState("");
   const [brandName, setBrandName] = useState("Your Business");
-  const [imageDataUrl, setImageDataUrl] = useState<string | null>(null);
+  const [images, setImages] = useState<string[]>([]);  // multi-photo array
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const [videoObjectUrl, setVideoObjectUrl] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -478,12 +578,13 @@ export default function GeneratePage() {
       try {
         const regen = JSON.parse(regenRaw) as {
           editId?: string; topic?: string; format?: string;
-          platform?: string; imageDataUrl?: string | null;
+          platform?: string; images?: string[] | null; imageDataUrl?: string | null;
         };
         if (regen.topic)    setTopic(regen.topic);
         if (regen.format   && FORMATS.some(f => f.value === regen.format))             setFormat(regen.format as Format);
         if (regen.platform && (PLATFORMS as readonly string[]).includes(regen.platform)) setPlatform(regen.platform as Platform);
-        if (regen.imageDataUrl) setImageDataUrl(regen.imageDataUrl);
+        if (regen.images?.length)        setImages(regen.images);
+        else if (regen.imageDataUrl)     setImages([regen.imageDataUrl]);
         if (regen.editId)   setEditId(regen.editId);
       } catch { /* ignore parse errors */ }
       sessionStorage.removeItem("regenerate");
@@ -493,6 +594,16 @@ export default function GeneratePage() {
     return () => { if (videoObjectUrl) URL.revokeObjectURL(videoObjectUrl); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Auto-switch format based on image count
+  useEffect(() => {
+    if (images.length > 1 && (format === "feed post" || format === "carousel")) {
+      setFormat("carousel");
+    } else if (images.length <= 1 && format === "carousel") {
+      setFormat("feed post");
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [images.length]);
 
   function handleFormatChange(f: Format) {
     setFormat(f);
@@ -544,13 +655,16 @@ export default function GeneratePage() {
     if (!content || saving) return;
 
     const videoMeta = videoFile ? { name: videoFile.name, size: videoFile.size, type: videoFile.type } : null;
+    const imagePayload = images.length > 0 ? {
+      images,
+      imageDataUrl: images[0],   // backward-compat for dashboard thumbnail
+    } : { images: null, imageDataUrl: null };
 
     if (needsReview) {
-      // Pass editId into the draft so /review can PATCH instead of POST
       sessionStorage.setItem("draft", JSON.stringify({
         ...(editId ? { id: editId } : {}),
         content, topic, format, platform,
-        imageDataUrl: imageDataUrl ?? null,
+        ...imagePayload,
         videoMeta,
       }));
       router.push("/review");
@@ -560,27 +674,16 @@ export default function GeneratePage() {
     setSaving(true);
     try {
       if (editId) {
-        // Re-generating an existing post — update it in place
         await fetch("/api/posts", {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            id: editId, content, topic, format, platform,
-            status: "approved",
-            imageDataUrl: imageDataUrl ?? null,
-            videoMeta,
-          }),
+          body: JSON.stringify({ id: editId, content, topic, format, platform, status: "approved", ...imagePayload, videoMeta }),
         });
       } else {
         await fetch("/api/posts", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            content, topic, format, platform,
-            status: "approved", scheduledDate: null,
-            imageDataUrl: imageDataUrl ?? null,
-            videoMeta,
-          }),
+          body: JSON.stringify({ content, topic, format, platform, status: "approved", scheduledDate: null, ...imagePayload, videoMeta }),
         });
       }
       setApproved(true);
@@ -592,7 +695,7 @@ export default function GeneratePage() {
 
   function handleStartOver() {
     abortRef.current?.abort();
-    setContent(""); setPhase("idle"); setError(""); setApproved(false);
+    setContent(""); setPhase("idle"); setError(""); setApproved(false); setImages([]);
   }
 
   // Right panel
@@ -615,7 +718,7 @@ export default function GeneratePage() {
   ) : format === "reel" ? (
     <ReelPostPreview content={content} brandName={brandName} phase={phase} videoObjectUrl={videoObjectUrl} />
   ) : (
-    <InstagramPreview content={content} brandName={brandName} phase={phase} imageDataUrl={imageDataUrl} />
+    <InstagramPreview content={content} brandName={brandName} phase={phase} imageDataUrl={images[0] ?? null} />
   );
 
   const approveButtonLabel = needsReview
@@ -668,21 +771,27 @@ export default function GeneratePage() {
               />
             </div>
 
-            {/* Media upload — photo or video for any format */}
+            {/* Media upload — multi-photo or video */}
             {(
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Media <span className="text-gray-400 font-normal">(optional)</span>
                 </label>
                 <MediaUpload
-                  media={{ imageDataUrl, videoFile, videoObjectUrl }}
-                  onImage={setImageDataUrl}
-                  onVideo={(file, url) => {
-                    setImageDataUrl(null);
-                    setVideoFile(file); setVideoObjectUrl(url);
-                  }}
-                  onRemove={() => {
-                    setImageDataUrl(null);
+                  images={images}
+                  videoFile={videoFile}
+                  videoObjectUrl={videoObjectUrl}
+                  onAddImages={(next) => setImages(prev => [...prev, ...next])}
+                  onRemoveImage={(idx) => setImages(prev => prev.filter((_, i) => i !== idx))}
+                  onReorderImages={(from, to) => setImages(prev => {
+                    const arr = [...prev];
+                    const [item] = arr.splice(from, 1);
+                    arr.splice(to, 0, item);
+                    return arr;
+                  })}
+                  onVideo={(file, url) => { setImages([]); setVideoFile(file); setVideoObjectUrl(url); }}
+                  onClearMedia={() => {
+                    setImages([]);
                     if (videoObjectUrl) URL.revokeObjectURL(videoObjectUrl);
                     setVideoFile(null); setVideoObjectUrl(null);
                   }}
