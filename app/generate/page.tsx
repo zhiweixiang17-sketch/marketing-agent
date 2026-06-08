@@ -169,8 +169,12 @@ function VideoUpload({ videoFile, videoObjectUrl, onUpload, onRemove }: {
   const inputRef = useRef<HTMLInputElement>(null);
 
   function handleFile(file: File) {
-    if (!file.type.match(/video\/(mp4|quicktime)/)) {
-      alert("Please upload an .mp4 or .mov file."); return;
+    // Accept any video/* MIME type, or fall back to extension check
+    // (browsers on Windows / Android often report unexpected MIME types)
+    const isVideoMime = file.type.startsWith("video/");
+    const isVideoExt  = /\.(mp4|mov|m4v|avi|webm|mkv)$/i.test(file.name);
+    if (!isVideoMime && !isVideoExt) {
+      alert("Please upload a video file (.mp4 or .mov)."); return;
     }
     if (file.size > 100 * 1024 * 1024) {
       alert("Please choose a video under 100 MB."); return;
@@ -198,7 +202,7 @@ function VideoUpload({ videoFile, videoObjectUrl, onUpload, onRemove }: {
       className={`border-2 border-dashed rounded-xl p-5 text-center cursor-pointer transition-all ${
         dragging ? "border-[#0F6E56] bg-[#E8F5F1]" : "border-gray-200 hover:border-gray-300 hover:bg-gray-50"
       }`}>
-      <input ref={inputRef} type="file" accept="video/mp4,video/quicktime,.mp4,.mov" className="hidden"
+      <input ref={inputRef} type="file" accept="video/*,.mp4,.mov,.m4v" className="hidden"
         onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }} />
       <div className="flex flex-col items-center gap-2">
         <svg className="w-8 h-8 text-gray-300" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
