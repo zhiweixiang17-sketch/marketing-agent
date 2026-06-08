@@ -42,15 +42,6 @@ function getSectionDefs(format: string, platform: string): SectionDef[] | null {
       { key: "CTA",            label: "CTA",           icon: "👋", hint: "Soft close · 3–5 seconds",           rows: 2 },
     ];
   }
-  if (format === "carousel") {
-    return [
-      { key: "SLIDE 1", label: "Slide 1 — Hook",    icon: "1️⃣", hint: "Makes them swipe",          rows: 3 },
-      { key: "SLIDE 2", label: "Slide 2 — Context", icon: "2️⃣", hint: "Deepen the story",          rows: 4 },
-      { key: "SLIDE 3", label: "Slide 3 — Detail",  icon: "3️⃣", hint: "Facts, numbers, flavour",   rows: 4 },
-      { key: "SLIDE 4", label: "Slide 4 — Story",   icon: "4️⃣", hint: "Human detail",              rows: 4 },
-      { key: "SLIDE 5", label: "Slide 5 — CTA",     icon: "5️⃣", hint: "Soft close + hashtags",     rows: 5 },
-    ];
-  }
   if (format === "story") {
     return [
       { key: "TEXT", label: "Story Text", icon: "📱", hint: "Bold statement or question · under 10 words", rows: 2 },
@@ -84,6 +75,59 @@ function parseSections(text: string, defs: SectionDef[]): Record<string, string>
 
 function reconstructSections(defs: SectionDef[], values: Record<string, string>): string {
   return defs.map(d => `${d.key}\n${values[d.key]}`).join("\n\n");
+}
+
+// ── Swipeable photo preview ───────────────────────────────────────────────────
+
+function SwipeablePhotoPreview({ images }: { images: string[] }) {
+  const [current, setCurrent] = useState(0);
+  const clamp = Math.min(current, images.length - 1);
+  return (
+    <div className="border-b border-gray-100">
+      <div className="relative overflow-hidden bg-gray-100" style={{ maxHeight: "420px", aspectRatio: "1 / 1" }}>
+        {images[clamp] && (
+          <img src={images[clamp]} alt={`Photo ${clamp + 1}`} className="w-full h-full object-cover" />
+        )}
+        {/* Prev */}
+        {clamp > 0 && (
+          <button onClick={() => setCurrent(c => c - 1)}
+            className="absolute left-3 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-white/85 shadow-md flex items-center justify-center hover:bg-white transition-colors"
+            aria-label="Previous photo">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
+            </svg>
+          </button>
+        )}
+        {/* Next */}
+        {clamp < images.length - 1 && (
+          <button onClick={() => setCurrent(c => c + 1)}
+            className="absolute right-3 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-white/85 shadow-md flex items-center justify-center hover:bg-white transition-colors"
+            aria-label="Next photo">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+            </svg>
+          </button>
+        )}
+        {/* Dots */}
+        {images.length > 1 && (
+          <div className="absolute bottom-3 left-0 right-0 flex justify-center gap-1.5">
+            {images.map((_, i) => (
+              <button key={i} onClick={() => setCurrent(i)}
+                className={`w-2 h-2 rounded-full transition-colors ${i === clamp ? "bg-white" : "bg-white/40"}`}
+                aria-label={`Photo ${i + 1}`}
+              />
+            ))}
+          </div>
+        )}
+        {/* Counter */}
+        {images.length > 1 && (
+          <span className="absolute top-3 right-3 bg-black/50 text-white text-xs px-2 py-0.5 rounded-full">
+            {clamp + 1} / {images.length}
+          </span>
+        )}
+      </div>
+    </div>
+  );
 }
 
 // ── Copy button ───────────────────────────────────────────────────────────────
@@ -155,16 +199,22 @@ export default function ReviewPage() {
   const defs = getSectionDefs(draft.format, draft.platform);
   const isSectioned = defs !== null;
   const isBoth = draft.platform === "both";
-
   const isEditing = Boolean(draft.id);
+
+  // Resolve photos: prefer images array, fall back to legacy imageDataUrl
+  const photoImages: string[] = draft.images?.length
+    ? draft.images
+    : draft.imageDataUrl
+    ? [draft.imageDataUrl]
+    : [];
 
   // Heading
   const pageTitle =
-    draft.format === "reel script" ? (isEditing ? "Edit Reel Script"     : "Review Reel Script") :
-    draft.format === "carousel"    ? (isEditing ? "Edit Carousel Slides"  : "Review Carousel Slides") :
-    draft.format === "story"       ? (isEditing ? "Edit Story"            : "Review Story") :
-    isBoth                         ? (isEditing ? "Edit Both Versions"    : "Review Both Versions") :
-                                     (isEditing ? "Edit Post"             : "Review & Approve");
+    draft.format === "reel script" ? (isEditing ? "Edit Reel Script"  : "Review Reel Script") :
+    draft.format === "story"       ? (isEditing ? "Edit Story"         : "Review Story") :
+    isBoth                         ? (isEditing ? "Edit Both Versions" : "Review Both Versions") :
+    photoImages.length > 1         ? (isEditing ? "Edit Gallery Post"  : "Review Gallery Post") :
+                                     (isEditing ? "Edit Post"          : "Review & Approve");
 
   // Build final content string for save
   function buildFinalContent(): string {
@@ -217,11 +267,9 @@ export default function ReviewPage() {
 
       <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
 
-        {/* Photo banner — for non-reel, non-script formats */}
-        {!["reel script", "carousel"].includes(draft.format) && !isBoth && draft.imageDataUrl && (
-          <div className="border-b border-gray-100">
-            <img src={draft.imageDataUrl} alt="Post photo" className="w-full max-h-64 object-cover" />
-          </div>
+        {/* Photo preview — swipeable gallery or single image */}
+        {draft.format !== "reel script" && !isBoth && photoImages.length > 0 && (
+          <SwipeablePhotoPreview images={photoImages} />
         )}
 
         {/* Video meta banner — for reel format */}
@@ -286,7 +334,6 @@ export default function ReviewPage() {
             text={copyText}
             label={
               draft.format === "reel script" ? "Copy Script" :
-              draft.format === "carousel"    ? "Copy All Slides" :
               isBoth                         ? "Copy Both Versions" :
               "Copy"
             }

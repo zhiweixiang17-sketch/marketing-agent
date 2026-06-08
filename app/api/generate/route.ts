@@ -21,7 +21,7 @@ const toneDescriptions: Record<string, string> = {
 
 // Formats that produce a single structured output regardless of platform.
 // "Both" platform is only meaningful for feed post and reel.
-const SINGLE_PLATFORM_FORMATS = new Set(["story", "carousel", "reel script"]);
+const SINGLE_PLATFORM_FORMATS = new Set(["story", "reel script"]);
 
 export async function POST(req: Request) {
   const { topic, format, platform } = await req.json();
@@ -58,26 +58,6 @@ POLL
 [Option A / Option B on the next line]
 
 Keep it ultra-brief — Stories are glanced at in 3 seconds.`,
-
-    carousel: `Write captions for a 5-slide Instagram carousel.
-Output EXACTLY in this format with each header on its own line:
-
-SLIDE 1
-[Hook — bold statement or question that compels a swipe. Under 12 words.]
-
-SLIDE 2
-[Context — 2-3 short lines that deepen the story or introduce the detail.]
-
-SLIDE 3
-[Detail — specific facts, numbers, sensory notes, or a surprising angle. 2-3 lines.]
-
-SLIDE 4
-[Continuation — social proof, behind-the-scenes moment, or human detail. 2-3 lines.]
-
-SLIDE 5
-[CTA — soft question or invitation. 1-2 lines, then 1 blank line, then 5-8 hashtags.]
-
-Each slide is scannable in 2 seconds. Short sentences, no fluff.`,
 
     "reel script": `Write a short-form video script for a 15–30 second reel.
 Output EXACTLY in this format with each header on its own line:

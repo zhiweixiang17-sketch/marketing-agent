@@ -164,7 +164,8 @@ function PostDetailModal({ post, onClose, onMarkPublished, onPublishToMeta }: {
       topic: post.topic,
       format: post.format,
       platform: post.platform,
-      imageDataUrl: post.imageDataUrl ?? null,
+      images: post.images ?? null,
+      imageDataUrl: post.images?.[0] ?? post.imageDataUrl ?? null,
       videoMeta: post.videoMeta ?? null,
     }));
     router.push("/review");

@@ -9,7 +9,6 @@ const FORMATS = [
   { value: "feed post",   label: "Feed Post"   },
   { value: "reel",        label: "Reel"         },
   { value: "story",       label: "Story"        },
-  { value: "carousel",    label: "Carousel"     },
   { value: "reel script", label: "Reel Script"  },
 ] as const;
 
@@ -21,7 +20,7 @@ type Platform = (typeof PLATFORMS)[number];
 const BOTH_COMPATIBLE = new Set<Format>(["feed post", "reel"]);
 
 // These formats always route through /review for section editing
-const NEEDS_REVIEW_FORMATS = new Set<Format>(["story", "carousel", "reel script"]);
+const NEEDS_REVIEW_FORMATS = new Set<Format>(["story", "reel script"]);
 
 type Phase = "idle" | "generating" | "done";
 
@@ -60,16 +59,6 @@ function parseReelScript(text: string): Record<ReelKey, string> {
   return parseGenericSections(text, REEL_KEYS) as Record<ReelKey, string>;
 }
 
-// Carousel sections
-const CAROUSEL_KEYS = ["SLIDE 1", "SLIDE 2", "SLIDE 3", "SLIDE 4", "SLIDE 5"] as const;
-const CAROUSEL_META = [
-  { key: "SLIDE 1", icon: "1️⃣", hint: "Hook"    },
-  { key: "SLIDE 2", icon: "2️⃣", hint: "Context" },
-  { key: "SLIDE 3", icon: "3️⃣", hint: "Details" },
-  { key: "SLIDE 4", icon: "4️⃣", hint: "Story"   },
-  { key: "SLIDE 5", icon: "5️⃣", hint: "CTA"     },
-];
-
 // ── Shared helpers ────────────────────────────────────────────────────────────
 
 function Spinner({ className = "h-5 w-5" }: { className?: string }) {
@@ -96,14 +85,14 @@ async function compressImage(dataUrl: string, maxDim = 1200, quality = 0.82): Pr
   });
 }
 
-// ── Multi-image grid with drag-to-reorder ────────────────────────────────────
+// ── Photo thumbnail row with drag-to-reorder ─────────────────────────────────
 
-function MultiImageGrid({ images, onRemove, onReorder }: {
+function ThumbnailRow({ images, onRemove, onReorder }: {
   images: string[];
   onRemove: (idx: number) => void;
   onReorder: (from: number, to: number) => void;
 }) {
-  const [dragIdx, setDragIdx]     = useState<number | null>(null);
+  const [dragIdx, setDragIdx]         = useState<number | null>(null);
   const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
 
   function handleDragStart(e: React.DragEvent, idx: number) {
@@ -123,7 +112,7 @@ function MultiImageGrid({ images, onRemove, onReorder }: {
   function handleDragEnd() { setDragIdx(null); setDragOverIdx(null); }
 
   return (
-    <div className="grid grid-cols-3 gap-2">
+    <div className="flex gap-2 overflow-x-auto pb-1">
       {images.map((img, idx) => (
         <div
           key={idx}
@@ -132,34 +121,30 @@ function MultiImageGrid({ images, onRemove, onReorder }: {
           onDragOver={(e) => handleDragOver(e, idx)}
           onDrop={(e) => handleDrop(e, idx)}
           onDragEnd={handleDragEnd}
-          className={`relative group rounded-xl overflow-hidden aspect-square cursor-grab border-2 transition-all select-none ${
+          className={`relative group shrink-0 w-16 h-16 rounded-xl overflow-hidden cursor-grab border-2 transition-all select-none ${
             dragIdx === idx ? "opacity-40 scale-95" : ""
           } ${dragOverIdx === idx && dragIdx !== idx ? "border-[#0F6E56] ring-2 ring-[#0F6E56]/20" : "border-transparent"}`}
         >
           <img src={img} alt={`Photo ${idx + 1}`} className="w-full h-full object-cover" draggable={false} />
-          {/* Cover / number badge */}
+          {/* Cover badge (bottom bar) / number badge (top-left) */}
           {idx === 0 ? (
-            <span className="absolute top-1.5 left-1.5 text-[9px] font-bold uppercase tracking-wider bg-[#0F6E56] text-white px-1.5 py-0.5 rounded shadow-sm">
+            <span className="absolute bottom-0 inset-x-0 text-[8px] font-bold uppercase tracking-wider bg-[#0F6E56]/90 text-white text-center py-0.5">
               Cover
             </span>
           ) : (
-            <span className="absolute top-1.5 left-1.5 text-[9px] font-bold bg-black/50 text-white px-1.5 py-0.5 rounded">
+            <span className="absolute top-0.5 left-0.5 text-[9px] font-bold bg-black/55 text-white px-1 py-0.5 rounded leading-none">
               {idx + 1}
             </span>
           )}
           {/* Remove button */}
           <button
             onClick={(e) => { e.preventDefault(); e.stopPropagation(); onRemove(idx); }}
-            className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/60 hover:bg-black/85 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity text-white"
+            className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-black/60 hover:bg-black/85 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity text-white"
           >
-            <svg width="7" height="7" viewBox="0 0 7 7" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-              <path d="M1 1l5 5M6 1L1 6" />
+            <svg width="6" height="6" viewBox="0 0 6 6" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+              <path d="M1 1l4 4M5 1L1 5" />
             </svg>
           </button>
-          {/* Drag hint */}
-          <div className="absolute inset-x-0 bottom-0 py-1 flex justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-gradient-to-t from-black/40 to-transparent">
-            <span className="text-[9px] text-white/90">drag to reorder</span>
-          </div>
         </div>
       ))}
     </div>
@@ -237,7 +222,7 @@ function MediaUpload({ images, videoFile, videoObjectUrl, onAddImages, onRemoveI
   return (
     <div className="space-y-2">
       {images.length > 0 && (
-        <MultiImageGrid images={images} onRemove={onRemoveImage} onReorder={onReorderImages} />
+        <ThumbnailRow images={images} onRemove={onRemoveImage} onReorder={onReorderImages} />
       )}
 
       {error && (
@@ -321,42 +306,6 @@ function ReelScriptPreview({ content, phase }: { content: string; phase: Phase }
               <div className="flex items-center gap-1.5 mb-1.5">
                 <span className="text-sm select-none">{icon}</span>
                 <span className="text-xs font-semibold uppercase tracking-wider text-gray-500">{label}</span>
-                <span className="text-xs text-gray-300 mx-0.5">·</span>
-                <span className="text-xs text-gray-400">{hint}</span>
-              </div>
-              {text ? (
-                <p className="text-sm text-gray-800 whitespace-pre-wrap leading-relaxed">
-                  {text}{showCursor && <span className="inline-block w-0.5 h-4 bg-[#0F6E56] ml-0.5 animate-pulse align-middle" />}
-                </p>
-              ) : <p className="text-sm text-gray-300 italic">{phase === "idle" ? "—" : "Generating…"}</p>}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-// Carousel preview
-function CarouselPreview({ content, phase }: { content: string; phase: Phase }) {
-  const slides = parseGenericSections(content, CAROUSEL_KEYS);
-  const lastFilledIdx = CAROUSEL_META.reduce((acc, m, i) => (slides[m.key] ? i : acc), -1);
-  return (
-    <div className="bg-white rounded-2xl border border-gray-200 shadow-md overflow-hidden w-full">
-      <div className="px-5 py-4 border-b border-gray-100 flex items-center gap-3">
-        <div className="w-9 h-9 rounded-xl bg-[#0F6E56]/10 flex items-center justify-center text-lg select-none">🎠</div>
-        <div className="flex-1"><p className="text-sm font-semibold text-gray-900">Carousel</p><p className="text-xs text-gray-400">5 slides · swipe right</p></div>
-        {phase === "generating" && <Spinner className="h-4 w-4" />}
-      </div>
-      <div className="divide-y divide-gray-100">
-        {CAROUSEL_META.map(({ key, icon, hint }, i) => {
-          const text = slides[key];
-          const showCursor = phase === "generating" && i === lastFilledIdx;
-          return (
-            <div key={key} className="px-5 py-3.5">
-              <div className="flex items-center gap-1.5 mb-1.5">
-                <span className="text-sm select-none">{icon}</span>
-                <span className="text-xs font-semibold uppercase tracking-wider text-gray-500">Slide {i + 1}</span>
                 <span className="text-xs text-gray-300 mx-0.5">·</span>
                 <span className="text-xs text-gray-400">{hint}</span>
               </div>
@@ -550,6 +499,87 @@ function InstagramPreview({ content, brandName, phase, imageDataUrl }: {
   );
 }
 
+// Gallery preview (multi-photo, Instagram carousel-style)
+function GalleryPreview({ images, content, brandName, phase }: {
+  images: string[]; content: string; brandName: string; phase: Phase;
+}) {
+  const [current, setCurrent] = useState(0);
+  const clampedCurrent = Math.min(current, images.length - 1);
+  const username = brandName.toLowerCase().replace(/\s+/g, "");
+  const initial = brandName[0]?.toUpperCase() ?? "B";
+  const parts = content.split(/\n\n+/);
+  const lastPart = parts[parts.length - 1] ?? "";
+  const hasHashtags = lastPart.trim().startsWith("#");
+  const caption = hasHashtags ? parts.slice(0, -1).join("\n\n") || content : content;
+  const hashtags = hasHashtags ? lastPart : "";
+
+  return (
+    <div className="bg-white rounded-2xl border border-gray-200 shadow-md overflow-hidden w-full max-w-sm">
+      {/* Header */}
+      <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-100">
+        <div className="w-9 h-9 rounded-full bg-[#0F6E56] flex items-center justify-center text-white text-sm font-bold shrink-0">{initial}</div>
+        <div className="flex-1 min-w-0"><p className="text-sm font-semibold text-gray-900 truncate">{username}</p><p className="text-xs text-gray-400">Sponsored</p></div>
+        <button className="text-gray-400 text-xl leading-none px-1">···</button>
+      </div>
+      {/* Photo carousel */}
+      <div className="relative aspect-square overflow-hidden bg-gray-100">
+        {images[clampedCurrent] && (
+          <img src={images[clampedCurrent]} alt="" className="w-full h-full object-cover select-none" draggable={false} />
+        )}
+        {/* Prev arrow */}
+        {clampedCurrent > 0 && (
+          <button onClick={() => setCurrent(c => c - 1)}
+            className="absolute left-2 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full bg-white/80 shadow-md flex items-center justify-center hover:bg-white transition-colors">
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
+            </svg>
+          </button>
+        )}
+        {/* Next arrow */}
+        {clampedCurrent < images.length - 1 && (
+          <button onClick={() => setCurrent(c => c + 1)}
+            className="absolute right-2 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full bg-white/80 shadow-md flex items-center justify-center hover:bg-white transition-colors">
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+            </svg>
+          </button>
+        )}
+        {/* Dot indicators */}
+        {images.length > 1 && (
+          <div className="absolute bottom-2.5 left-0 right-0 flex justify-center gap-1.5">
+            {images.map((_, i) => (
+              <button key={i} onClick={() => setCurrent(i)}
+                className={`w-1.5 h-1.5 rounded-full transition-colors ${i === clampedCurrent ? "bg-white" : "bg-white/40"}`}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+      {/* Action row */}
+      <div className="px-4 py-3 flex items-center gap-4 text-gray-800">
+        <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M21 8.25c0-2.485-2.099-4.5-4.688-4.5-1.935 0-3.597 1.126-4.312 2.733-.715-1.607-2.377-2.733-4.313-2.733C5.1 3.75 3 5.765 3 8.25c0 7.22 9 12 9 12s9-4.78 9-12z" /></svg>
+        <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M12 20.25c4.97 0 9-3.694 9-8.25s-4.03-8.25-9-8.25S3 7.444 3 12c0 2.104.859 4.023 2.273 5.48.432.447.74 1.04.586 1.641a4.483 4.483 0 01-.923 1.785A5.969 5.969 0 006 21c1.282 0 2.47-.402 3.445-1.087.81.22 1.668.337 2.555.337z" /></svg>
+        <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" /></svg>
+        <div className="ml-auto"><svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0111.186 0z" /></svg></div>
+      </div>
+      {/* Caption */}
+      <div className="px-4 pb-5">
+        {!content && phase !== "generating" ? (
+          <p className="text-sm text-gray-300 italic">Caption will appear here…</p>
+        ) : (
+          <>
+            <p className="text-sm text-gray-900 whitespace-pre-wrap leading-relaxed">
+              <span className="font-semibold">{username} </span>{caption}
+              {phase === "generating" && <span className="inline-block w-0.5 h-4 bg-[#0F6E56] ml-0.5 animate-pulse align-middle" />}
+            </p>
+            {hashtags && <p className="text-sm text-[#0F6E56] mt-2 leading-relaxed">{hashtags}</p>}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function GeneratePage() {
@@ -595,16 +625,6 @@ export default function GeneratePage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Auto-switch format based on image count
-  useEffect(() => {
-    if (images.length > 1 && (format === "feed post" || format === "carousel")) {
-      setFormat("carousel");
-    } else if (images.length <= 1 && format === "carousel") {
-      setFormat("feed post");
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [images.length]);
-
   function handleFormatChange(f: Format) {
     setFormat(f);
     setContent(""); setPhase("idle"); setError(""); setApproved(false);
@@ -648,8 +668,9 @@ export default function GeneratePage() {
   }
 
   // Formats that always route through /review for section-based editing
+  // Also: multiple photos need review to confirm the single caption
   const isBothVersions = platform === "both" && BOTH_COMPATIBLE.has(format);
-  const needsReview = NEEDS_REVIEW_FORMATS.has(format) || isBothVersions;
+  const needsReview = NEEDS_REVIEW_FORMATS.has(format) || isBothVersions || images.length > 1;
 
   async function handleApprove() {
     if (!content || saving) return;
@@ -700,31 +721,31 @@ export default function GeneratePage() {
 
   // Right panel
   const previewLabel =
-    isBothVersions ? "Both Versions" :
+    isBothVersions   ? "Both Versions" :
     format === "reel script" ? "Script Preview" :
-    format === "carousel"    ? "Carousel Preview" :
     format === "story"       ? "Story Preview" :
     format === "reel"        ? "Reel Preview" :
+    images.length > 1        ? "Gallery Preview" :
     "Live Preview";
 
   const rightPanel = isBothVersions ? (
     <BothPlatformsPreview content={content} phase={phase} />
   ) : format === "reel script" ? (
     <ReelScriptPreview content={content} phase={phase} />
-  ) : format === "carousel" ? (
-    <CarouselPreview content={content} phase={phase} />
   ) : format === "story" ? (
     <StoryPreview content={content} phase={phase} />
   ) : format === "reel" ? (
     <ReelPostPreview content={content} brandName={brandName} phase={phase} videoObjectUrl={videoObjectUrl} />
+  ) : images.length > 1 ? (
+    <GalleryPreview images={images} content={content} brandName={brandName} phase={phase} />
   ) : (
     <InstagramPreview content={content} brandName={brandName} phase={phase} imageDataUrl={images[0] ?? null} />
   );
 
   const approveButtonLabel = needsReview
     ? format === "reel script" ? "Review Script →"
-    : format === "carousel"   ? "Review Slides →"
-    : format === "story"      ? "Review Story →"
+    : format === "story"       ? "Review Story →"
+    : images.length > 1        ? "Review Gallery →"
     : "Review Versions →"
     : saving ? "Saving…" : "Approve & Save";
 
@@ -811,8 +832,8 @@ export default function GeneratePage() {
                   >{label}</button>
                 ))}
               </div>
-              {format === "carousel" && (
-                <p className="text-xs text-gray-400 mt-1.5">Generates 5 slide captions — you&apos;ll review each before saving.</p>
+              {images.length > 1 && (
+                <p className="text-xs text-gray-400 mt-1.5">{images.length} photos · will publish as a gallery post · one caption for all.</p>
               )}
               {format === "story" && (
                 <p className="text-xs text-gray-400 mt-1.5">Generates text + a poll suggestion for your Story.</p>

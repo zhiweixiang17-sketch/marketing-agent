@@ -15,6 +15,7 @@ type Post = {
   content: string;
   platform: string;
   status: string;
+  images?: string[] | null;
   imageDataUrl?: string | null;
 };
 
@@ -88,12 +89,39 @@ export async function POST(req: Request) {
 
   const results: Record<string, unknown> = {};
 
+  // Normalise images: prefer the array, fall back to single imageDataUrl
+  const allImages: string[] = post.images?.length
+    ? post.images
+    : post.imageDataUrl
+    ? [post.imageDataUrl]
+    : [];
+  const isGallery = allImages.length > 1;
+
   // ── Facebook ────────────────────────────────────────────────────────────────
   const postToFacebook = post.platform === "Facebook" || post.platform === "both";
   if (postToFacebook) {
     try {
-      if (post.imageDataUrl) {
-        const { blob, mimeType } = dataUrlToBlob(post.imageDataUrl);
+      if (isGallery) {
+        // Multi-image gallery: upload each photo as unpublished, attach to a feed post
+        const photoIds: string[] = [];
+        for (const imgDataUrl of allImages) {
+          const upload = await uploadImageToFacebook(pageId, token, imgDataUrl);
+          if ("error" in upload) throw new Error(upload.error);
+          photoIds.push(upload.photoId);
+        }
+        const res = await fetch(`https://graph.facebook.com/${GV}/${pageId}/feed`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            message: post.content,
+            attached_media: photoIds.map(id => ({ media_fbid: id })),
+            access_token: token,
+          }),
+        });
+        results.facebook = await res.json();
+      } else if (allImages[0]) {
+        // Single image
+        const { blob, mimeType } = dataUrlToBlob(allImages[0]);
         const fd = new FormData();
         fd.append("source", new File([blob], `photo.${mimeType.split("/")[1] ?? "jpg"}`, { type: mimeType }));
         fd.append("message", post.content);
@@ -122,36 +150,76 @@ export async function POST(req: Request) {
   if (postToInstagram) {
     if (!igUserId) {
       results.instagram = { skipped: true, reason: "META_IG_USER_ID not configured" };
-    } else if (!post.imageDataUrl) {
+    } else if (allImages.length === 0) {
       results.instagram = { skipped: true, reason: "Instagram requires an image — text-only posts are not supported by the API" };
     } else {
       try {
-        // Step 1: Upload image to Facebook CDN to get a public URL
-        const upload = await uploadImageToFacebook(pageId, token, post.imageDataUrl);
-        if ("error" in upload) {
-          results.instagram = { error: upload.error };
-        } else {
-          // Step 2: Create Instagram media container
-          const container = await fetch(`https://graph.facebook.com/${GV}/${igUserId}/media`, {
+        if (isGallery) {
+          // ── Carousel post ─────────────────────────────────────────────────
+          // Step 1: Create a child container for each image
+          const childIds: string[] = [];
+          for (const imgDataUrl of allImages) {
+            const upload = await uploadImageToFacebook(pageId, token, imgDataUrl);
+            if ("error" in upload) throw new Error(upload.error);
+            const child = await fetch(`https://graph.facebook.com/${GV}/${igUserId}/media`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                image_url: upload.imageUrl,
+                is_carousel_item: true,
+                access_token: token,
+              }),
+            }).then((r) => r.json());
+            if (!child.id) throw new Error(`Failed to create carousel item: ${JSON.stringify(child)}`);
+            childIds.push(child.id);
+          }
+          // Step 2: Create parent carousel container
+          const carousel = await fetch(`https://graph.facebook.com/${GV}/${igUserId}/media`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              image_url: upload.imageUrl,
+              media_type: "CAROUSEL",
+              children: childIds,
               caption: post.content,
               access_token: token,
             }),
           }).then((r) => r.json());
-
-          if (!container.id) {
-            results.instagram = { error: "Failed to create Instagram media container", details: container };
+          if (!carousel.id) throw new Error(`Failed to create carousel container: ${JSON.stringify(carousel)}`);
+          // Step 3: Publish the carousel
+          const published = await fetch(`https://graph.facebook.com/${GV}/${igUserId}/media_publish`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ creation_id: carousel.id, access_token: token }),
+          }).then((r) => r.json());
+          results.instagram = published;
+        } else {
+          // ── Single image post ─────────────────────────────────────────────
+          // Step 1: Upload image to Facebook CDN to get a public URL
+          const upload = await uploadImageToFacebook(pageId, token, allImages[0]);
+          if ("error" in upload) {
+            results.instagram = { error: upload.error };
           } else {
-            // Step 3: Publish the container
-            const published = await fetch(`https://graph.facebook.com/${GV}/${igUserId}/media_publish`, {
+            // Step 2: Create Instagram media container
+            const container = await fetch(`https://graph.facebook.com/${GV}/${igUserId}/media`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ creation_id: container.id, access_token: token }),
+              body: JSON.stringify({
+                image_url: upload.imageUrl,
+                caption: post.content,
+                access_token: token,
+              }),
             }).then((r) => r.json());
-            results.instagram = published;
+            if (!container.id) {
+              results.instagram = { error: "Failed to create Instagram media container", details: container };
+            } else {
+              // Step 3: Publish the container
+              const published = await fetch(`https://graph.facebook.com/${GV}/${igUserId}/media_publish`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ creation_id: container.id, access_token: token }),
+              }).then((r) => r.json());
+              results.instagram = published;
+            }
           }
         }
       } catch (err) {
