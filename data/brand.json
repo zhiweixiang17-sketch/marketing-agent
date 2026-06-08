@@ -1,0 +1,32 @@
+{
+  "business_name": "Stottle Winery",
+  "business_type": "Winery",
+  "location": "Lacey, Washington",
+  "founded_year": 2009,
+  "tone_of_voice": "Warm",
+  "content_pillars": [
+    "Winery club membership",
+    "Food and wine pairing",
+    "Behind-the-scenes winemaking",
+    "Local events and tastings",
+    "Wine education",
+    "Product spotlights",
+    "Customer stories"
+  ],
+  "never_say": [
+    "cheap",
+    "discount",
+    "mass-produced",
+    "just a glass"
+  ],
+  "key_products": [
+    "2023 Reserved Malbec",
+    "2024 Chardonnay",
+    "2024 Rosé",
+    "2023 Big Eddie",
+    "2023 Hombre",
+    "2025 Viognier",
+    "2025 Roussanne"
+  ],
+  "target_customer": "Wine-curious adults 35-70 who appreciate quality over quantity, enjoy food culture, and seek authentic local experiences"
+}
