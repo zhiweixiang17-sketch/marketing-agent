@@ -17,28 +17,12 @@ interface Props {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/** Fetch a URL and return a local blob URL — avoids CORS and webpack bundling. */
+/** Fetch a URL and return a local blob URL — avoids CORS issues inside workers. */
 async function toBlobURL(url: string, mimeType: string): Promise<string> {
   const resp = await fetch(url);
   if (!resp.ok) throw new Error(`Failed to fetch ${url}: ${resp.status}`);
   const buf = await resp.arrayBuffer();
   return URL.createObjectURL(new Blob([buf], { type: mimeType }));
-}
-
-/** Load a <script> tag once; resolves immediately if already loaded. */
-function loadScript(src: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (document.querySelector(`script[data-src="${src}"]`)) {
-      resolve();
-      return;
-    }
-    const s = document.createElement("script");
-    s.src = src;
-    s.setAttribute("data-src", src);
-    s.onload = () => resolve();
-    s.onerror = () => reject(new Error(`Script load failed: ${src}`));
-    document.head.appendChild(s);
-  });
 }
 
 function dataUrlToUint8Array(dataUrl: string): Uint8Array {
@@ -54,10 +38,9 @@ function buildSubtitleText(caption: string): string {
   const para = caption.split(/\n\n+/)[0] ?? caption;
   const clean = para.replace(/#\S+/g, "").replace(/\s+/g, " ").trim();
   const truncated = clean.length > 72 ? clean.slice(0, 69) + "..." : clean;
-  // Escape characters that break FFmpeg drawtext
   return truncated
     .replace(/\\/g, "\\\\")
-    .replace(/'/g, "’")   // replace straight apostrophe with right single quote (safe in drawtext)
+    .replace(/'/g, "’")  // right single quote — safe in drawtext
     .replace(/:/g, "\\:")
     .replace(/\[/g, "\\[")
     .replace(/\]/g, "\\]");
@@ -74,42 +57,41 @@ export default function ReelCreator({ images, caption, mood, onComplete, onError
     cancelled.current = false;
 
     try {
-      // ── 1. Load FFmpeg UMD from CDN via <script> tag ───────────────────
+      // ── 1. Load FFmpeg (ESM import) + WASM core ────────────────────────
       //
-      // WHY UMD + script tag instead of `import("@ffmpeg/ffmpeg")`?
+      // WHY classWorkerURL?
       //
-      // The ESM package has `new Worker(new URL("./worker.js", import.meta.url))`
-      // which Next.js/webpack tries to bundle.  The bundled worker then replaces
-      // `import()` with `__webpack_require__`, which can't handle blob URLs at
-      // runtime → "Cannot find module as expression is too dynamic".
+      // @ffmpeg/ffmpeg's ESM classes.js has:
+      //   new Worker(new URL("./worker.js", import.meta.url), {type:"module"})
       //
-      // Loading the UMD bundle via a plain <script> tag means webpack never
-      // sees it.  The UMD bundle spawns its own classic worker (814.ffmpeg.js)
-      // from the same CDN path; classic workers use `importScripts()` which
-      // accepts blob URLs natively — no webpack interception.
+      // webpack bundles worker.js into a chunk and replaces its dynamic
+      // `import(_coreURL)` with `__webpack_require__()`, which throws
+      // "Cannot find module as expression is too dynamic" at runtime.
+      //
+      // classWorkerURL bypasses the webpack-bundled worker entirely.
+      // At runtime the FFmpeg class instead creates:
+      //   new Worker(new URL(classWorkerURL, import.meta.url))
+      //
+      // We serve the real, unprocessed worker.js from /public/ffmpeg-esm/.
+      // Its relative imports (./const.js, ./errors.js) resolve same-origin,
+      // and its native import(blobUrl) works without webpack interception.
       //
       setStatusText("Loading FFmpeg…");
       setProgress(3);
 
-      // Load from /public/ (same-origin) — cross-origin Worker URLs are blocked by browsers.
-      // The UMD bundle auto-calculates its public path from the <script> src, so it
-      // will look for 814.ffmpeg.js at the same origin (/814.ffmpeg.js).
-      const coreBase = "https://unpkg.com/@ffmpeg/core@0.12.9/dist/umd";
-
-      await loadScript("/ffmpeg.js");
+      const { FFmpeg } = await import("@ffmpeg/ffmpeg");
 
       if (cancelled.current) return;
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { FFmpeg } = (globalThis as any).FFmpegWASM as { FFmpeg: new () => FFmpegInstance };
       const ffmpeg = new FFmpeg();
 
-      setProgress(8);
+      const coreBase = "https://unpkg.com/@ffmpeg/core@0.12.9/dist/esm";
 
-      // Load WASM core — UMD worker uses importScripts() so UMD core is needed
       await ffmpeg.load({
-        coreURL: await toBlobURL(`${coreBase}/ffmpeg-core.js`,   "text/javascript"),
-        wasmURL: await toBlobURL(`${coreBase}/ffmpeg-core.wasm`, "application/wasm"),
+        // Serve from /public/ffmpeg-esm/ — same-origin, not webpack-processed
+        classWorkerURL: "/ffmpeg-esm/worker.js",
+        coreURL:  await toBlobURL(`${coreBase}/ffmpeg-core.js`,   "text/javascript"),
+        wasmURL:  await toBlobURL(`${coreBase}/ffmpeg-core.wasm`, "application/wasm"),
       });
 
       if (cancelled.current) return;
@@ -145,18 +127,16 @@ export default function ReelCreator({ images, caption, mood, onComplete, onError
 
       // ── 4. Build filter_complex ────────────────────────────────────────
       const FPS       = 25;
-      const SECS      = 3;                           // seconds per photo
+      const SECS      = 3;
       const FRAMES    = FPS * SECS;                  // 75 frames per photo
-      const FADE_SECS = 0.5;                         // crossfade duration
+      const FADE_SECS = 0.5;
       const N         = images.length;
       const subtitle  = buildSubtitleText(caption);
 
-      // Per-photo: scale to cover 1080×1920, Ken Burns zoom, set fps+SAR
       const filterParts: string[] = [];
 
       for (let i = 0; i < N; i++) {
         const isZoomIn = i % 2 === 0;
-        // Alternate zoom-in / zoom-out for cinematic variety
         const kenBurns = isZoomIn
           ? `zoompan=z='min(zoom+0.002,1.15)':x='iw*(1-1/zoom)/2':y='ih*(1-1/zoom)/2':d=${FRAMES}:fps=${FPS}:s=1080x1920`
           : `zoompan=z='if(eq(on,1),1.15,max(zoom-0.002,1.0))':x='iw*(1-1/zoom)/2':y='ih*(1-1/zoom)/2':d=${FRAMES}:fps=${FPS}:s=1080x1920`;
@@ -172,8 +152,6 @@ export default function ReelCreator({ images, caption, mood, onComplete, onError
         );
       }
 
-      // Chain xfade transitions between clips
-      // xfade offset = index × (SECS − FADE_SECS)
       if (N === 1) {
         filterParts.push(`[v0]null[vmerge]`);
       } else {
@@ -188,7 +166,6 @@ export default function ReelCreator({ images, caption, mood, onComplete, onError
         }
       }
 
-      // Burn subtitle text
       if (subtitle) {
         filterParts.push(
           `[vmerge]drawtext=` +
@@ -206,14 +183,12 @@ export default function ReelCreator({ images, caption, mood, onComplete, onError
       const filterComplex = filterParts.join("; ");
       const totalDuration = (N * SECS - (N - 1) * FADE_SECS).toFixed(2);
 
-      // Input args — one still image input per photo
       const inputArgs: string[] = [];
       for (let i = 0; i < N; i++) {
         inputArgs.push("-loop", "1", "-t", String(SECS + 0.1), "-i", `img${i}.jpg`);
       }
       if (audioData) inputArgs.push("-i", "music.mp3");
 
-      // Fade-out the audio 1.5 s before the end
       const audioFadeStart = Math.max(0, parseFloat(totalDuration) - 1.5);
 
       const cmd: string[] = [
@@ -238,9 +213,9 @@ export default function ReelCreator({ images, caption, mood, onComplete, onError
       setStatusText("Creating your Reel…");
       setProgress(22);
 
-      ffmpeg.on("progress", ({ progress: p }: { progress: number }) => {
+      ffmpeg.on("progress", ({ progress: p }) => {
         if (p >= 0 && p <= 1) {
-          const pct = 22 + Math.round(p * 72);  // 22% → 94%
+          const pct = 22 + Math.round(p * 72);
           setProgress(pct);
           setStatusText(`Creating your Reel… ${pct}%`);
         }
@@ -255,7 +230,6 @@ export default function ReelCreator({ images, caption, mood, onComplete, onError
       setProgress(97);
 
       const rawOut = await ffmpeg.readFile("output.mp4") as Uint8Array;
-      // Copy buffer to plain ArrayBuffer to satisfy TypeScript / Blob constructor
       const plain = rawOut.buffer.slice(0) as ArrayBuffer;
       const blob = new Blob([plain], { type: "video/mp4" });
 
@@ -276,7 +250,6 @@ export default function ReelCreator({ images, caption, mood, onComplete, onError
 
   return (
     <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 space-y-4 w-full">
-      {/* Header */}
       <div className="flex items-center gap-3">
         <div className="w-9 h-9 rounded-xl bg-[#0F6E56]/10 flex items-center justify-center text-lg select-none shrink-0">
           🎬
@@ -293,7 +266,6 @@ export default function ReelCreator({ images, caption, mood, onComplete, onError
         </button>
       </div>
 
-      {/* Progress bar */}
       <div className="space-y-1.5">
         <div className="h-2.5 bg-gray-100 rounded-full overflow-hidden">
           <div
@@ -313,20 +285,4 @@ export default function ReelCreator({ images, caption, mood, onComplete, onError
       </p>
     </div>
   );
-}
-
-// ── Minimal FFmpeg type for the UMD instance (no import from @ffmpeg/ffmpeg) ──
-
-interface FFmpegInstance {
-  load(config: {
-    coreURL?: string;
-    wasmURL?: string;
-    workerURL?: string;
-  }): Promise<boolean>;
-  on(event: "progress", handler: (e: { progress: number; ratio: number }) => void): void;
-  on(event: "log",      handler: (e: { type: string; message: string }) => void): void;
-  exec(args: string[]): Promise<number>;
-  writeFile(path: string, data: Uint8Array): Promise<void>;
-  readFile(path: string): Promise<Uint8Array | string>;
-  terminate(): void;
 }
