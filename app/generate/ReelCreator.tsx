@@ -17,6 +17,30 @@ interface Props {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+/** Fetch a URL and return a local blob URL — avoids CORS and webpack bundling. */
+async function toBlobURL(url: string, mimeType: string): Promise<string> {
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error(`Failed to fetch ${url}: ${resp.status}`);
+  const buf = await resp.arrayBuffer();
+  return URL.createObjectURL(new Blob([buf], { type: mimeType }));
+}
+
+/** Load a <script> tag once; resolves immediately if already loaded. */
+function loadScript(src: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (document.querySelector(`script[data-src="${src}"]`)) {
+      resolve();
+      return;
+    }
+    const s = document.createElement("script");
+    s.src = src;
+    s.setAttribute("data-src", src);
+    s.onload = () => resolve();
+    s.onerror = () => reject(new Error(`Script load failed: ${src}`));
+    document.head.appendChild(s);
+  });
+}
+
 function dataUrlToUint8Array(dataUrl: string): Uint8Array {
   const [, b64] = dataUrl.split(",");
   const bin = atob(b64);
@@ -33,7 +57,7 @@ function buildSubtitleText(caption: string): string {
   // Escape characters that break FFmpeg drawtext
   return truncated
     .replace(/\\/g, "\\\\")
-    .replace(/'/g, "’")   // replace smart apostrophe (safe in drawtext)
+    .replace(/'/g, "’")   // replace straight apostrophe with right single quote (safe in drawtext)
     .replace(/:/g, "\\:")
     .replace(/\[/g, "\\[")
     .replace(/\]/g, "\\]");
@@ -50,22 +74,40 @@ export default function ReelCreator({ images, caption, mood, onComplete, onError
     cancelled.current = false;
 
     try {
-      // ── 1. Dynamically load FFmpeg (avoids SSR issues) ─────────────────
+      // ── 1. Load FFmpeg UMD from CDN via <script> tag ───────────────────
+      //
+      // WHY UMD + script tag instead of `import("@ffmpeg/ffmpeg")`?
+      //
+      // The ESM package has `new Worker(new URL("./worker.js", import.meta.url))`
+      // which Next.js/webpack tries to bundle.  The bundled worker then replaces
+      // `import()` with `__webpack_require__`, which can't handle blob URLs at
+      // runtime → "Cannot find module as expression is too dynamic".
+      //
+      // Loading the UMD bundle via a plain <script> tag means webpack never
+      // sees it.  The UMD bundle spawns its own classic worker (814.ffmpeg.js)
+      // from the same CDN path; classic workers use `importScripts()` which
+      // accepts blob URLs natively — no webpack interception.
+      //
       setStatusText("Loading FFmpeg…");
       setProgress(3);
 
-      const { FFmpeg } = await import("@ffmpeg/ffmpeg");
-      const { toBlobURL } = await import("@ffmpeg/util");
+      const ffBase   = "https://unpkg.com/@ffmpeg/ffmpeg@0.12.15/dist/umd";
+      const coreBase = "https://unpkg.com/@ffmpeg/core@0.12.9/dist/umd";
+
+      await loadScript(`${ffBase}/ffmpeg.js`);
 
       if (cancelled.current) return;
 
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { FFmpeg } = (globalThis as any).FFmpegWASM as { FFmpeg: new () => FFmpegInstance };
       const ffmpeg = new FFmpeg();
 
-      // Single-threaded core — no SharedArrayBuffer / COOP headers needed
-      const base = "https://unpkg.com/@ffmpeg/core@0.12.9/dist/esm";
+      setProgress(8);
+
+      // Load WASM core — UMD worker uses importScripts() so UMD core is needed
       await ffmpeg.load({
-        coreURL:  await toBlobURL(`${base}/ffmpeg-core.js`,   "text/javascript"),
-        wasmURL:  await toBlobURL(`${base}/ffmpeg-core.wasm`, "application/wasm"),
+        coreURL: await toBlobURL(`${coreBase}/ffmpeg-core.js`,   "text/javascript"),
+        wasmURL: await toBlobURL(`${coreBase}/ffmpeg-core.wasm`, "application/wasm"),
       });
 
       if (cancelled.current) return;
@@ -194,7 +236,7 @@ export default function ReelCreator({ images, caption, mood, onComplete, onError
       setStatusText("Creating your Reel…");
       setProgress(22);
 
-      ffmpeg.on("progress", ({ progress: p }) => {
+      ffmpeg.on("progress", ({ progress: p }: { progress: number }) => {
         if (p >= 0 && p <= 1) {
           const pct = 22 + Math.round(p * 72);  // 22% → 94%
           setProgress(pct);
@@ -269,4 +311,20 @@ export default function ReelCreator({ images, caption, mood, onComplete, onError
       </p>
     </div>
   );
+}
+
+// ── Minimal FFmpeg type for the UMD instance (no import from @ffmpeg/ffmpeg) ──
+
+interface FFmpegInstance {
+  load(config: {
+    coreURL?: string;
+    wasmURL?: string;
+    workerURL?: string;
+  }): Promise<boolean>;
+  on(event: "progress", handler: (e: { progress: number; ratio: number }) => void): void;
+  on(event: "log",      handler: (e: { type: string; message: string }) => void): void;
+  exec(args: string[]): Promise<number>;
+  writeFile(path: string, data: Uint8Array): Promise<void>;
+  readFile(path: string): Promise<Uint8Array | string>;
+  terminate(): void;
 }
