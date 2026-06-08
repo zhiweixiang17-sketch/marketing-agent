@@ -96,32 +96,51 @@ async function compressImage(dataUrl: string, maxDim = 1200, quality = 0.82): Pr
   });
 }
 
-// ── Photo upload (for Feed Post, Story) ──────────────────────────────────────
+// ── Unified media upload (photo OR video, all formats) ───────────────────────
 
-function PhotoUpload({ imageDataUrl, onUpload, onRemove }: {
-  imageDataUrl: string | null; onUpload: (d: string) => void; onRemove: () => void;
+type MediaState = {
+  imageDataUrl: string | null;
+  videoFile: File | null;
+  videoObjectUrl: string | null;
+};
+
+function MediaUpload({ media, onImage, onVideo, onRemove }: {
+  media: MediaState;
+  onImage: (dataUrl: string) => void;
+  onVideo: (file: File, url: string) => void;
+  onRemove: () => void;
 }) {
-  const [dragging, setDragging] = useState(false);
+  const [dragging, setDragging]     = useState(false);
   const [compressing, setCompressing] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   async function handleFile(file: File) {
-    if (!file.type.startsWith("image/")) return;
-    if (file.size > 20 * 1024 * 1024) { alert("Please choose an image under 20 MB."); return; }
-    setCompressing(true);
-    const reader = new FileReader();
-    reader.onload = async (e) => {
-      const compressed = await compressImage(e.target?.result as string);
-      onUpload(compressed);
-      setCompressing(false);
-    };
-    reader.readAsDataURL(file);
+    const isImage = file.type.startsWith("image/");
+    const isVideo = file.type.startsWith("video/") || /\.(mp4|mov|m4v|avi|webm|mkv)$/i.test(file.name);
+
+    if (isImage) {
+      if (file.size > 20 * 1024 * 1024) { alert("Please choose an image under 20 MB."); return; }
+      setCompressing(true);
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        const compressed = await compressImage(e.target?.result as string);
+        onImage(compressed);
+        setCompressing(false);
+      };
+      reader.readAsDataURL(file);
+    } else if (isVideo) {
+      if (file.size > 100 * 1024 * 1024) { alert("Please choose a video under 100 MB."); return; }
+      onVideo(file, URL.createObjectURL(file));
+    } else {
+      alert("Please upload an image or video file.");
+    }
   }
 
-  if (imageDataUrl) {
+  // ── Previews ──
+  if (media.imageDataUrl) {
     return (
       <div className="relative rounded-xl overflow-hidden border border-gray-200 group">
-        <img src={imageDataUrl} alt="Uploaded" className="w-full max-h-48 object-cover" />
+        <img src={media.imageDataUrl} alt="Uploaded" className="w-full max-h-52 object-contain bg-gray-50" />
         <button onClick={onRemove}
           className="absolute top-2 right-2 w-7 h-7 bg-black/50 hover:bg-black/70 rounded-full flex items-center justify-center text-white transition-colors"
           title="Remove photo">
@@ -133,82 +152,48 @@ function PhotoUpload({ imageDataUrl, onUpload, onRemove }: {
     );
   }
 
-  return (
-    <div onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
-      onDragLeave={() => setDragging(false)}
-      onDrop={(e) => { e.preventDefault(); setDragging(false); const f = e.dataTransfer.files[0]; if (f) handleFile(f); }}
-      onClick={() => !compressing && inputRef.current?.click()}
-      className={`border-2 border-dashed rounded-xl p-5 text-center cursor-pointer transition-all ${
-        dragging ? "border-[#0F6E56] bg-[#E8F5F1]" : "border-gray-200 hover:border-gray-300 hover:bg-gray-50"
-      } ${compressing ? "cursor-wait" : ""}`}>
-      <input ref={inputRef} type="file" accept="image/*" className="hidden"
-        onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }} />
-      <div className="flex flex-col items-center gap-2">
-        {compressing ? (
-          <><Spinner className="h-5 w-5" /><p className="text-sm text-gray-500">Optimising image…</p></>
-        ) : (
-          <>
-            <svg className="w-8 h-8 text-gray-300" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 001.5-1.5V6a1.5 1.5 0 00-1.5-1.5H3.75A1.5 1.5 0 002.25 6v12a1.5 1.5 0 001.5 1.5z" />
-            </svg>
-            <p className="text-sm text-gray-500">Drag & drop or click · JPG, PNG, HEIC</p>
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ── Video upload (for Reel) ───────────────────────────────────────────────────
-
-function VideoUpload({ videoFile, videoObjectUrl, onUpload, onRemove }: {
-  videoFile: File | null; videoObjectUrl: string | null;
-  onUpload: (file: File, url: string) => void; onRemove: () => void;
-}) {
-  const [dragging, setDragging] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  function handleFile(file: File) {
-    // Accept any video/* MIME type, or fall back to extension check
-    // (browsers on Windows / Android often report unexpected MIME types)
-    const isVideoMime = file.type.startsWith("video/");
-    const isVideoExt  = /\.(mp4|mov|m4v|avi|webm|mkv)$/i.test(file.name);
-    if (!isVideoMime && !isVideoExt) {
-      alert("Please upload a video file (.mp4 or .mov)."); return;
-    }
-    if (file.size > 100 * 1024 * 1024) {
-      alert("Please choose a video under 100 MB."); return;
-    }
-    onUpload(file, URL.createObjectURL(file));
-  }
-
-  if (videoObjectUrl && videoFile) {
+  if (media.videoObjectUrl && media.videoFile) {
     return (
       <div className="rounded-xl overflow-hidden border border-gray-200">
-        <video src={videoObjectUrl} className="w-full max-h-44 object-cover bg-black" controls muted playsInline />
+        <video src={media.videoObjectUrl} className="w-full max-h-52 bg-black" controls muted playsInline />
         <div className="flex items-center justify-between px-3 py-2 bg-gray-50 border-t border-gray-200">
-          <span className="text-xs text-gray-500 truncate mr-2">{videoFile.name}</span>
+          <span className="text-xs text-gray-500 truncate mr-2">{media.videoFile.name}</span>
           <button onClick={onRemove} className="text-xs text-red-500 hover:text-red-700 shrink-0">Remove</button>
         </div>
       </div>
     );
   }
 
+  // ── Drop zone ──
   return (
-    <div onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+    <div
+      onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
       onDragLeave={() => setDragging(false)}
       onDrop={(e) => { e.preventDefault(); setDragging(false); const f = e.dataTransfer.files[0]; if (f) handleFile(f); }}
-      onClick={() => inputRef.current?.click()}
+      onClick={() => !compressing && inputRef.current?.click()}
       className={`border-2 border-dashed rounded-xl p-5 text-center cursor-pointer transition-all ${
         dragging ? "border-[#0F6E56] bg-[#E8F5F1]" : "border-gray-200 hover:border-gray-300 hover:bg-gray-50"
-      }`}>
-      <input ref={inputRef} type="file" accept="video/*,.mp4,.mov,.m4v" className="hidden"
+      } ${compressing ? "cursor-wait" : ""}`}>
+      <input ref={inputRef} type="file" accept="image/*,video/*,.mp4,.mov,.m4v" className="hidden"
         onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }} />
       <div className="flex flex-col items-center gap-2">
-        <svg className="w-8 h-8 text-gray-300" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z" />
-        </svg>
-        <p className="text-sm text-gray-500">Drag & drop or click · MP4, MOV · up to 100 MB</p>
+        {compressing ? (
+          <><Spinner className="h-5 w-5" /><p className="text-sm text-gray-500">Optimising…</p></>
+        ) : (
+          <>
+            <div className="flex items-center gap-2 text-gray-300">
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 001.5-1.5V6a1.5 1.5 0 00-1.5-1.5H3.75A1.5 1.5 0 002.25 6v12a1.5 1.5 0 001.5 1.5z" />
+              </svg>
+              <span className="text-gray-300 text-lg">/</span>
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z" />
+              </svg>
+            </div>
+            <p className="text-sm text-gray-500">Photo or video · drag & drop or click</p>
+            <p className="text-xs text-gray-400">JPG, PNG, MP4, MOV · image up to 20 MB · video up to 100 MB</p>
+          </>
+        )}
       </div>
     </div>
   );
@@ -514,13 +499,6 @@ export default function GeneratePage() {
     setContent(""); setPhase("idle"); setError(""); setApproved(false);
     // If new format doesn't support "both", revert to Instagram
     if (platform === "both" && !BOTH_COMPATIBLE.has(f)) setPlatform("Instagram");
-    // Clear video when leaving reel format
-    if (f !== "reel" && videoObjectUrl) {
-      URL.revokeObjectURL(videoObjectUrl);
-      setVideoFile(null); setVideoObjectUrl(null);
-    }
-    // Clear image when entering reel format
-    if (f === "reel") setImageDataUrl(null);
   }
 
   async function handleGenerate() {
@@ -690,27 +668,25 @@ export default function GeneratePage() {
               />
             </div>
 
-            {/* Media upload — photo for most formats, video for Reel */}
-            {format === "reel" ? (
+            {/* Media upload — photo or video for any format */}
+            {(
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Video <span className="text-gray-400 font-normal">(optional)</span>
+                  Media <span className="text-gray-400 font-normal">(optional)</span>
                 </label>
-                <VideoUpload
-                  videoFile={videoFile} videoObjectUrl={videoObjectUrl}
-                  onUpload={(file, url) => { setVideoFile(file); setVideoObjectUrl(url); }}
+                <MediaUpload
+                  media={{ imageDataUrl, videoFile, videoObjectUrl }}
+                  onImage={setImageDataUrl}
+                  onVideo={(file, url) => {
+                    setImageDataUrl(null);
+                    setVideoFile(file); setVideoObjectUrl(url);
+                  }}
                   onRemove={() => {
+                    setImageDataUrl(null);
                     if (videoObjectUrl) URL.revokeObjectURL(videoObjectUrl);
                     setVideoFile(null); setVideoObjectUrl(null);
                   }}
                 />
-              </div>
-            ) : (format === "feed post" || format === "story") && (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Photo <span className="text-gray-400 font-normal">(optional)</span>
-                </label>
-                <PhotoUpload imageDataUrl={imageDataUrl} onUpload={setImageDataUrl} onRemove={() => setImageDataUrl(null)} />
               </div>
             )}
 
