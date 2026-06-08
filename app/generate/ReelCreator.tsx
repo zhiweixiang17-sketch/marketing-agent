@@ -87,9 +87,13 @@ export default function ReelCreator({ images, caption, mood, onComplete, onError
 
       const coreBase = "https://unpkg.com/@ffmpeg/core@0.12.9/dist/esm";
 
+      // Build an absolute URL so `new URL(classWorkerURL, import.meta.url)`
+      // in classes.js ignores import.meta.url entirely (webpack resolves it
+      // to a file:// path at build time, which breaks relative resolution).
+      const workerURL = window.location.origin + "/ffmpeg-esm/worker.js";
+
       await ffmpeg.load({
-        // Serve from /public/ffmpeg-esm/ — same-origin, not webpack-processed
-        classWorkerURL: "/ffmpeg-esm/worker.js",
+        classWorkerURL: workerURL,
         coreURL:  await toBlobURL(`${coreBase}/ffmpeg-core.js`,   "text/javascript"),
         wasmURL:  await toBlobURL(`${coreBase}/ffmpeg-core.wasm`, "application/wasm"),
       });
