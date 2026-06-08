@@ -1,7 +1,12 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import type { ReelMood } from "./ReelCreator";
+
+// Lazy-load the heavy FFmpeg component (only downloaded when used)
+const ReelCreator = dynamic(() => import("./ReelCreator"), { ssr: false });
 
 // ── Constants & types ─────────────────────────────────────────────────────────
 
@@ -21,6 +26,13 @@ const BOTH_COMPATIBLE = new Set<Format>(["feed post", "reel"]);
 
 // These formats always route through /review for section editing
 const NEEDS_REVIEW_FORMATS = new Set<Format>(["story", "reel script"]);
+
+const MOODS: { value: ReelMood; label: string; emoji: string }[] = [
+  { value: "Upbeat",   label: "Upbeat",   emoji: "🎉" },
+  { value: "Calm",     label: "Calm",     emoji: "🌿" },
+  { value: "Romantic", label: "Romantic", emoji: "🌹" },
+  { value: "Dramatic", label: "Dramatic", emoji: "🎭" },
+];
 
 type Phase = "idle" | "generating" | "done";
 
@@ -597,6 +609,13 @@ export default function GeneratePage() {
   const [saving, setSaving] = useState(false);
   const [approved, setApproved] = useState(false);
   const [editId, setEditId] = useState<string | null>(null); // set when re-generating an existing post
+
+  // Photo-to-Reel state
+  const [mood, setMood] = useState<ReelMood>("Calm");
+  const [creatingReel, setCreatingReel] = useState(false);
+  const [reelBlob, setReelBlob] = useState<Blob | null>(null);
+  const [reelObjectUrl, setReelObjectUrl] = useState<string | null>(null);
+
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -620,8 +639,11 @@ export default function GeneratePage() {
       sessionStorage.removeItem("regenerate");
     }
 
-    // Cleanup video object URL on unmount
-    return () => { if (videoObjectUrl) URL.revokeObjectURL(videoObjectUrl); };
+    // Cleanup object URLs on unmount
+    return () => {
+      if (videoObjectUrl) URL.revokeObjectURL(videoObjectUrl);
+      if (reelObjectUrl) URL.revokeObjectURL(reelObjectUrl);
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -717,25 +739,60 @@ export default function GeneratePage() {
   function handleStartOver() {
     abortRef.current?.abort();
     setContent(""); setPhase("idle"); setError(""); setApproved(false); setImages([]);
+    setCreatingReel(false);
+    if (reelObjectUrl) { URL.revokeObjectURL(reelObjectUrl); setReelObjectUrl(null); }
+    setReelBlob(null);
+  }
+
+  function handleReelComplete(blob: Blob) {
+    if (reelObjectUrl) URL.revokeObjectURL(reelObjectUrl);
+    const url = URL.createObjectURL(blob);
+    setReelBlob(blob);
+    setReelObjectUrl(url);
+    setCreatingReel(false);
+  }
+
+  function handleDownloadReel() {
+    if (!reelBlob) return;
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(reelBlob);
+    a.download = `reel-${Date.now()}.mp4`;
+    a.click();
   }
 
   // Right panel
+  // Photo-to-Reel: true when format=reel and user uploaded multiple photos
+  const isPhotoReel = format === "reel" && images.length > 1;
+
   const previewLabel =
-    isBothVersions   ? "Both Versions" :
+    isBothVersions           ? "Both Versions" :
     format === "reel script" ? "Script Preview" :
     format === "story"       ? "Story Preview" :
+    isPhotoReel              ? "Reel Preview" :
     format === "reel"        ? "Reel Preview" :
     images.length > 1        ? "Gallery Preview" :
     "Live Preview";
 
-  const rightPanel = isBothVersions ? (
+  // For the reel preview, use the generated reel video URL if available, otherwise the uploaded video
+  const effectiveVideoUrl = reelObjectUrl ?? videoObjectUrl;
+
+  const rightPanel = creatingReel ? (
+    <ReelCreator
+      images={images}
+      caption={content}
+      mood={mood}
+      onComplete={handleReelComplete}
+      onError={(msg) => { setCreatingReel(false); setError(`Reel creation failed: ${msg}`); }}
+      onCancel={() => setCreatingReel(false)}
+    />
+  ) : isBothVersions ? (
     <BothPlatformsPreview content={content} phase={phase} />
   ) : format === "reel script" ? (
     <ReelScriptPreview content={content} phase={phase} />
   ) : format === "story" ? (
     <StoryPreview content={content} phase={phase} />
   ) : format === "reel" ? (
-    <ReelPostPreview content={content} brandName={brandName} phase={phase} videoObjectUrl={videoObjectUrl} />
+    <ReelPostPreview content={content} brandName={brandName} phase={phase} videoObjectUrl={effectiveVideoUrl} />
   ) : images.length > 1 ? (
     <GalleryPreview images={images} content={content} brandName={brandName} phase={phase} />
   ) : (
@@ -832,7 +889,12 @@ export default function GeneratePage() {
                   >{label}</button>
                 ))}
               </div>
-              {images.length > 1 && (
+              {isPhotoReel && (
+                <p className="text-xs text-[#0F6E56] mt-1.5 font-medium">
+                  📸→🎬 {images.length} photos will be stitched into a Reel with Ken Burns effects.
+                </p>
+              )}
+              {!isPhotoReel && images.length > 1 && (
                 <p className="text-xs text-gray-400 mt-1.5">{images.length} photos · will publish as a gallery post · one caption for all.</p>
               )}
               {format === "story" && (
@@ -862,6 +924,31 @@ export default function GeneratePage() {
               )}
             </div>
 
+            {/* Mood selector — shown when creating a Reel from photos */}
+            {isPhotoReel && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Music mood <span className="text-gray-400 font-normal">(for the Reel)</span>
+                </label>
+                <div className="flex gap-2 flex-wrap">
+                  {MOODS.map(({ value, label, emoji }) => (
+                    <button key={value} onClick={() => setMood(value)}
+                      className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-sm font-medium border transition-colors ${
+                        mood === value
+                          ? "bg-[#0F6E56] text-white border-[#0F6E56] shadow-sm"
+                          : "border-gray-200 text-gray-600 hover:border-gray-300 hover:bg-gray-50"
+                      }`}
+                    >
+                      <span>{emoji}</span>{label}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-xs text-gray-400 mt-1.5">
+                  Royalty-free music from Pixabay · requires <code className="text-[10px] bg-gray-100 px-1 rounded">PIXABAY_API_KEY</code>
+                </p>
+              </div>
+            )}
+
             {error && (
               <div className="rounded-xl bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">{error}</div>
             )}
@@ -879,6 +966,26 @@ export default function GeneratePage() {
 
             {phase === "done" && !approved && (
               <>
+                {/* Photo-to-Reel: "Create Reel" before caption approve */}
+                {isPhotoReel && !reelObjectUrl && !creatingReel && (
+                  <button
+                    onClick={() => setCreatingReel(true)}
+                    className="flex items-center gap-1.5 px-5 py-2.5 bg-[#0F6E56] text-white rounded-xl text-sm font-medium hover:bg-[#0A5A45] transition-colors shadow-sm"
+                  >
+                    🎬 Create Reel
+                  </button>
+                )}
+
+                {/* Download the generated reel video */}
+                {reelObjectUrl && (
+                  <button
+                    onClick={handleDownloadReel}
+                    className="flex items-center gap-1.5 px-5 py-2.5 bg-white border border-[#0F6E56] text-[#0F6E56] rounded-xl text-sm font-medium hover:bg-[#E8F5F1] transition-colors shadow-sm"
+                  >
+                    ⬇ Download Reel
+                  </button>
+                )}
+
                 <button onClick={handleApprove} disabled={saving}
                   className="px-5 py-2.5 bg-white border border-[#0F6E56] text-[#0F6E56] rounded-xl text-sm font-medium hover:bg-[#E8F5F1] disabled:opacity-50 transition-colors shadow-sm"
                 >
