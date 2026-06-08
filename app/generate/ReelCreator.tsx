@@ -91,10 +91,12 @@ export default function ReelCreator({ images, caption, mood, onComplete, onError
       setStatusText("Loading FFmpeg…");
       setProgress(3);
 
-      const ffBase   = "https://unpkg.com/@ffmpeg/ffmpeg@0.12.15/dist/umd";
+      // Load from /public/ (same-origin) — cross-origin Worker URLs are blocked by browsers.
+      // The UMD bundle auto-calculates its public path from the <script> src, so it
+      // will look for 814.ffmpeg.js at the same origin (/814.ffmpeg.js).
       const coreBase = "https://unpkg.com/@ffmpeg/core@0.12.9/dist/umd";
 
-      await loadScript(`${ffBase}/ffmpeg.js`);
+      await loadScript("/ffmpeg.js");
 
       if (cancelled.current) return;
 
