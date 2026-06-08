@@ -124,6 +124,24 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
+// ── Plain caption renderer ────────────────────────────────────────────────────
+
+function PlainCaption({ content }: { content: string }) {
+  const parts = content.split(/\n\n+/);
+  const lastPart = parts[parts.length - 1] ?? "";
+  const hasHashtags = lastPart.trim().startsWith("#");
+  const caption = hasHashtags ? parts.slice(0, -1).join("\n\n") : content;
+  const hashtags = hasHashtags ? lastPart : null;
+  return (
+    <>
+      <p className="text-sm text-gray-800 whitespace-pre-wrap leading-relaxed">{caption}</p>
+      {hashtags && (
+        <p className="text-sm text-[#0F6E56] mt-3 leading-relaxed">{hashtags}</p>
+      )}
+    </>
+  );
+}
+
 // ── Post Detail Modal ─────────────────────────────────────────────────────────
 
 function PostDetailModal({ post, onClose, onMarkPublished, onPublishToMeta }: {
@@ -211,14 +229,7 @@ function PostDetailModal({ post, onClose, onMarkPublished, onPublishToMeta }: {
         {/* ── Scrollable body ── */}
         <div className="overflow-y-auto flex-1 min-h-0 overscroll-contain">
 
-          {/* Photo */}
-          {post.imageDataUrl && (
-            <div className="border-b border-gray-100">
-              <img src={post.imageDataUrl} alt="Post photo" className="w-full max-h-64 object-cover" />
-            </div>
-          )}
-
-          {/* Video meta */}
+          {/* Video meta strip */}
           {post.videoMeta && (
             <div className="flex items-center gap-2.5 px-5 sm:px-6 py-3 bg-gray-50 border-b border-gray-100 text-sm text-gray-600">
               <svg className="w-4 h-4 text-gray-400 shrink-0" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
@@ -229,42 +240,59 @@ function PostDetailModal({ post, onClose, onMarkPublished, onPublishToMeta }: {
             </div>
           )}
 
-          {/* Content — sections or plain */}
+          {/* Content */}
           {defs && sections ? (
-            <div className={isBoth ? "sm:grid sm:grid-cols-2 sm:divide-x divide-gray-100" : "divide-y divide-gray-100"}>
-              {defs.map(({ key, label, icon }) => (
-                <div key={key} className="px-5 sm:px-6 py-5 border-b border-gray-100 last:border-b-0">
-                  <div className="flex items-center gap-1.5 mb-2">
-                    <span className="text-sm select-none">{icon}</span>
-                    <span className="text-xs font-semibold uppercase tracking-wider text-gray-500">{label}</span>
-                  </div>
-                  {sections[key] ? (
-                    <p className="text-sm text-gray-800 whitespace-pre-wrap leading-relaxed">{sections[key]}</p>
-                  ) : (
-                    <p className="text-sm text-gray-300 italic">—</p>
-                  )}
+
+            /* ── Structured formats (reel script / carousel / story / both) ── */
+            <>
+              {/* Compact image banner above sections if present */}
+              {post.imageDataUrl && (
+                <div className="border-b border-gray-100">
+                  <img src={post.imageDataUrl} alt="" className="w-full max-h-36 object-cover" />
                 </div>
-              ))}
-            </div>
-          ) : (
-            <div className="px-5 sm:px-6 py-5">
-              {/* Split caption + hashtags for feed/reel posts */}
-              {(() => {
-                const parts = post.content.split(/\n\n+/);
-                const lastPart = parts[parts.length - 1] ?? "";
-                const hasHashtags = lastPart.trim().startsWith("#");
-                const caption = hasHashtags ? parts.slice(0, -1).join("\n\n") : post.content;
-                const hashtags = hasHashtags ? lastPart : null;
-                return (
-                  <>
-                    <p className="text-sm text-gray-800 whitespace-pre-wrap leading-relaxed">{caption}</p>
-                    {hashtags && (
-                      <p className="text-sm text-[#0F6E56] mt-3 leading-relaxed">{hashtags}</p>
+              )}
+              <div className={isBoth ? "sm:grid sm:grid-cols-2 sm:divide-x divide-gray-100" : "divide-y divide-gray-100"}>
+                {defs.map(({ key, label, icon }) => (
+                  <div key={key} className="px-5 sm:px-6 py-5 border-b border-gray-100 last:border-b-0">
+                    <div className="flex items-center gap-1.5 mb-2">
+                      <span className="text-sm select-none">{icon}</span>
+                      <span className="text-xs font-semibold uppercase tracking-wider text-gray-500">{label}</span>
+                    </div>
+                    {sections[key] ? (
+                      <p className="text-sm text-gray-800 whitespace-pre-wrap leading-relaxed">{sections[key]}</p>
+                    ) : (
+                      <p className="text-sm text-gray-300 italic">—</p>
                     )}
-                  </>
-                );
-              })()}
+                  </div>
+                ))}
+              </div>
+            </>
+
+          ) : post.imageDataUrl ? (
+
+            /* ── Photo post: image + caption side by side ── */
+            <div className="flex flex-col sm:flex-row sm:divide-x divide-gray-100">
+              {/* Image column */}
+              <div className="sm:w-52 shrink-0 bg-gray-50 border-b sm:border-b-0 border-gray-100">
+                <img
+                  src={post.imageDataUrl}
+                  alt="Post photo"
+                  className="w-full sm:h-full max-h-48 sm:max-h-none object-cover"
+                />
+              </div>
+              {/* Text column — always visible alongside the image */}
+              <div className="flex-1 px-5 sm:px-6 py-5 min-w-0">
+                <PlainCaption content={post.content} />
+              </div>
             </div>
+
+          ) : (
+
+            /* ── Plain text, no image ── */
+            <div className="px-5 sm:px-6 py-5">
+              <PlainCaption content={post.content} />
+            </div>
+
           )}
         </div>
 
