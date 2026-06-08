@@ -13,6 +13,7 @@ type Post = {
   scheduledDate: string | null;
   createdAt: string;
   imageDataUrl?: string | null;
+  videoMeta?: { name: string; size: number; type: string } | null;
 };
 
 const STATUS_CONFIG = {
@@ -22,9 +23,12 @@ const STATUS_CONFIG = {
 };
 
 const FORMAT_ICONS: Record<string, string> = {
-  caption: "📝",
+  caption:       "📝",   // legacy
+  "feed post":   "📝",
+  reel:          "🎬",
+  story:         "📱",
+  carousel:      "🎠",
   "reel script": "🎬",
-  story: "📱",
 };
 
 function StatusBadge({ status }: { status: Post["status"] }) {
