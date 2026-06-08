@@ -477,10 +477,29 @@ export default function GeneratePage() {
   const [videoObjectUrl, setVideoObjectUrl] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [approved, setApproved] = useState(false);
+  const [editId, setEditId] = useState<string | null>(null); // set when re-generating an existing post
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     fetch("/api/brand").then(r => r.json()).then(d => setBrandName(d.business_name ?? "Your Business")).catch(() => {});
+
+    // Pre-fill form when coming from "Regenerate" on an existing post
+    const regenRaw = sessionStorage.getItem("regenerate");
+    if (regenRaw) {
+      try {
+        const regen = JSON.parse(regenRaw) as {
+          editId?: string; topic?: string; format?: string;
+          platform?: string; imageDataUrl?: string | null;
+        };
+        if (regen.topic)    setTopic(regen.topic);
+        if (regen.format   && FORMATS.some(f => f.value === regen.format))             setFormat(regen.format as Format);
+        if (regen.platform && (PLATFORMS as readonly string[]).includes(regen.platform)) setPlatform(regen.platform as Platform);
+        if (regen.imageDataUrl) setImageDataUrl(regen.imageDataUrl);
+        if (regen.editId)   setEditId(regen.editId);
+      } catch { /* ignore parse errors */ }
+      sessionStorage.removeItem("regenerate");
+    }
+
     // Cleanup video object URL on unmount
     return () => { if (videoObjectUrl) URL.revokeObjectURL(videoObjectUrl); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -542,11 +561,15 @@ export default function GeneratePage() {
   async function handleApprove() {
     if (!content || saving) return;
 
+    const videoMeta = videoFile ? { name: videoFile.name, size: videoFile.size, type: videoFile.type } : null;
+
     if (needsReview) {
+      // Pass editId into the draft so /review can PATCH instead of POST
       sessionStorage.setItem("draft", JSON.stringify({
+        ...(editId ? { id: editId } : {}),
         content, topic, format, platform,
         imageDataUrl: imageDataUrl ?? null,
-        videoMeta: videoFile ? { name: videoFile.name, size: videoFile.size, type: videoFile.type } : null,
+        videoMeta,
       }));
       router.push("/review");
       return;
@@ -554,16 +577,30 @@ export default function GeneratePage() {
 
     setSaving(true);
     try {
-      await fetch("/api/posts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          content, topic, format, platform,
-          status: "approved", scheduledDate: null,
-          imageDataUrl: imageDataUrl ?? null,
-          videoMeta: videoFile ? { name: videoFile.name, size: videoFile.size, type: videoFile.type } : null,
-        }),
-      });
+      if (editId) {
+        // Re-generating an existing post — update it in place
+        await fetch("/api/posts", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id: editId, content, topic, format, platform,
+            status: "approved",
+            imageDataUrl: imageDataUrl ?? null,
+            videoMeta,
+          }),
+        });
+      } else {
+        await fetch("/api/posts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            content, topic, format, platform,
+            status: "approved", scheduledDate: null,
+            imageDataUrl: imageDataUrl ?? null,
+            videoMeta,
+          }),
+        });
+      }
       setApproved(true);
       setTimeout(() => router.push("/dashboard"), 900);
     } finally {
@@ -609,9 +646,28 @@ export default function GeneratePage() {
   return (
     <div>
       <div className="mb-6 sm:mb-8">
-        <h1 className="text-2xl font-bold text-gray-900">Generate a Post</h1>
-        <p className="text-sm text-gray-500 mt-1">Describe what the post is about — Claude writes in your brand voice.</p>
+        <h1 className="text-2xl font-bold text-gray-900">
+          {editId ? "Regenerate Post" : "Generate a Post"}
+        </h1>
+        <p className="text-sm text-gray-500 mt-1">
+          {editId
+            ? "Topic and format are pre-filled from the existing post — tweak them or generate straight away."
+            : "Describe what the post is about — Claude writes in your brand voice."}
+        </p>
       </div>
+
+      {/* Edit-mode banner */}
+      {editId && (
+        <div className="mb-5 flex items-center gap-2.5 px-4 py-3 bg-amber-50 border border-amber-200 rounded-xl text-sm text-amber-700">
+          <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z" />
+          </svg>
+          <span>Regenerating an existing post — approving will <strong>update</strong> it, not create a new one.</span>
+          <button onClick={() => setEditId(null)} className="ml-auto text-amber-500 hover:text-amber-700 text-xs underline shrink-0">
+            Save as new instead
+          </button>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 sm:gap-8 items-start">
 
