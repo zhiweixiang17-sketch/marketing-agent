@@ -8,7 +8,38 @@ const PLATFORMS = ["Instagram", "Facebook", "both"] as const;
 
 type Phase = "idle" | "generating" | "done";
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+// ── Reel script helpers ───────────────────────────────────────────────────────
+
+const REEL_KEYS = ["HOOK", "SCRIPT", "ON-SCREEN TEXT", "CTA"] as const;
+type ReelKey = (typeof REEL_KEYS)[number];
+type ReelSections = Record<ReelKey, string>;
+
+const REEL_META: { key: ReelKey; label: string; icon: string; hint: string }[] = [
+  { key: "HOOK",           label: "Hook",          icon: "🪝", hint: "First 3 seconds" },
+  { key: "SCRIPT",         label: "Script",         icon: "🎙️", hint: "Voiceover"       },
+  { key: "ON-SCREEN TEXT", label: "On-screen Text", icon: "📺", hint: "Overlays"         },
+  { key: "CTA",            label: "CTA",            icon: "👋", hint: "Call to action"   },
+];
+
+function parseReelScript(text: string): ReelSections {
+  const result: ReelSections = { HOOK: "", SCRIPT: "", "ON-SCREEN TEXT": "", CTA: "" };
+  let current: ReelKey | null = null;
+  let buf: string[] = [];
+  for (const line of text.split("\n")) {
+    const up = line.trim().toUpperCase();
+    if ((REEL_KEYS as readonly string[]).includes(up)) {
+      if (current !== null) result[current] = buf.join("\n").trim();
+      current = up as ReelKey;
+      buf = [];
+    } else if (current !== null) {
+      buf.push(line);
+    }
+  }
+  if (current !== null) result[current] = buf.join("\n").trim();
+  return result;
+}
+
+// ── Shared helpers ────────────────────────────────────────────────────────────
 
 function Spinner({ className = "h-5 w-5" }: { className?: string }) {
   return (
@@ -52,10 +83,7 @@ function PhotoUpload({
 
   async function handleFile(file: File) {
     if (!file.type.startsWith("image/")) return;
-    if (file.size > 20 * 1024 * 1024) {
-      alert("Please choose an image under 20 MB.");
-      return;
-    }
+    if (file.size > 20 * 1024 * 1024) { alert("Please choose an image under 20 MB."); return; }
     setCompressing(true);
     const reader = new FileReader();
     reader.onload = async (e) => {
@@ -89,31 +117,20 @@ function PhotoUpload({
       onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
       onDragLeave={() => setDragging(false)}
       onDrop={(e) => {
-        e.preventDefault();
-        setDragging(false);
+        e.preventDefault(); setDragging(false);
         const file = e.dataTransfer.files[0];
         if (file) handleFile(file);
       }}
       onClick={() => !compressing && inputRef.current?.click()}
       className={`border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-all ${
-        dragging
-          ? "border-[#0F6E56] bg-[#E8F5F1]"
-          : "border-gray-200 hover:border-gray-300 hover:bg-gray-50"
+        dragging ? "border-[#0F6E56] bg-[#E8F5F1]" : "border-gray-200 hover:border-gray-300 hover:bg-gray-50"
       } ${compressing ? "cursor-wait" : ""}`}
     >
-      <input
-        ref={inputRef}
-        type="file"
-        accept="image/*"
-        className="hidden"
-        onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }}
-      />
+      <input ref={inputRef} type="file" accept="image/*" className="hidden"
+        onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }} />
       <div className="flex flex-col items-center gap-2.5">
         {compressing ? (
-          <>
-            <Spinner className="h-6 w-6" />
-            <p className="text-sm text-gray-500">Optimising image…</p>
-          </>
+          <><Spinner className="h-6 w-6" /><p className="text-sm text-gray-500">Optimising image…</p></>
         ) : (
           <>
             <div className="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center text-gray-400">
@@ -123,7 +140,7 @@ function PhotoUpload({
             </div>
             <div>
               <p className="text-sm font-medium text-gray-700">Add a photo</p>
-              <p className="text-xs text-gray-400 mt-0.5">Drag & drop or click to browse · JPG, PNG, HEIC</p>
+              <p className="text-xs text-gray-400 mt-0.5">Drag & drop or click · JPG, PNG, HEIC</p>
             </div>
           </>
         )}
@@ -132,7 +149,60 @@ function PhotoUpload({
   );
 }
 
-// ── Instagram preview ─────────────────────────────────────────────────────────
+// ── Reel script preview (right panel) ────────────────────────────────────────
+
+function ReelScriptPreview({ content, phase }: { content: string; phase: Phase }) {
+  const sections = parseReelScript(content);
+
+  // For cursor placement: find index of the last section with any content
+  const lastFilledIdx = REEL_META.reduce((acc, m, i) => (sections[m.key] ? i : acc), -1);
+
+  return (
+    <div className="bg-white rounded-2xl border border-gray-200 shadow-md overflow-hidden w-full">
+      {/* Header */}
+      <div className="px-5 py-4 border-b border-gray-100 flex items-center gap-3">
+        <div className="w-9 h-9 rounded-xl bg-[#0F6E56]/10 flex items-center justify-center text-lg select-none">🎬</div>
+        <div className="flex-1">
+          <p className="text-sm font-semibold text-gray-900">Reel Script</p>
+          <p className="text-xs text-gray-400">15–30 second video</p>
+        </div>
+        {phase === "generating" && <Spinner className="h-4 w-4" />}
+      </div>
+
+      {/* Sections */}
+      <div className="divide-y divide-gray-100">
+        {REEL_META.map(({ key, label, icon, hint }, i) => {
+          const text = sections[key];
+          const showCursor = phase === "generating" && i === lastFilledIdx;
+          return (
+            <div key={key} className="px-5 py-4">
+              <div className="flex items-center gap-1.5 mb-1.5">
+                <span className="text-sm select-none">{icon}</span>
+                <span className="text-xs font-semibold uppercase tracking-wider text-gray-500">{label}</span>
+                <span className="text-xs text-gray-300 mx-0.5">·</span>
+                <span className="text-xs text-gray-400">{hint}</span>
+              </div>
+              {text ? (
+                <p className="text-sm text-gray-800 whitespace-pre-wrap leading-relaxed">
+                  {text}
+                  {showCursor && (
+                    <span className="inline-block w-0.5 h-4 bg-[#0F6E56] ml-0.5 animate-pulse align-middle" />
+                  )}
+                </p>
+              ) : (
+                <p className="text-sm text-gray-300 italic">
+                  {phase === "idle" ? "—" : "Generating…"}
+                </p>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ── Instagram post preview ────────────────────────────────────────────────────
 
 function HeartIcon() {
   return <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M21 8.25c0-2.485-2.099-4.5-4.688-4.5-1.935 0-3.597 1.126-4.312 2.733-.715-1.607-2.377-2.733-4.313-2.733C5.1 3.75 3 5.765 3 8.25c0 7.22 9 12 9 12s9-4.78 9-12z" /></svg>;
@@ -148,15 +218,9 @@ function BookmarkIcon() {
 }
 
 function InstagramPreview({
-  content,
-  brandName,
-  phase,
-  imageDataUrl,
+  content, brandName, phase, imageDataUrl,
 }: {
-  content: string;
-  brandName: string;
-  phase: Phase;
-  imageDataUrl: string | null;
+  content: string; brandName: string; phase: Phase; imageDataUrl: string | null;
 }) {
   const username = brandName.toLowerCase().replace(/\s+/g, "");
   const initial = brandName[0]?.toUpperCase() ?? "B";
@@ -169,11 +233,8 @@ function InstagramPreview({
 
   return (
     <div className="bg-white rounded-2xl border border-gray-200 shadow-md overflow-hidden w-full max-w-sm">
-      {/* Profile header */}
       <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-100">
-        <div className="w-9 h-9 rounded-full bg-[#0F6E56] flex items-center justify-center text-white text-sm font-bold shrink-0">
-          {initial}
-        </div>
+        <div className="w-9 h-9 rounded-full bg-[#0F6E56] flex items-center justify-center text-white text-sm font-bold shrink-0">{initial}</div>
         <div className="flex-1 min-w-0">
           <p className="text-sm font-semibold text-gray-900 truncate">{username}</p>
           <p className="text-xs text-gray-400">Sponsored</p>
@@ -181,7 +242,6 @@ function InstagramPreview({
         <button className="text-gray-400 text-xl leading-none px-1">···</button>
       </div>
 
-      {/* Image area */}
       {imageDataUrl ? (
         <img src={imageDataUrl} alt="Post photo" className="w-full aspect-square object-cover" />
       ) : (
@@ -199,13 +259,11 @@ function InstagramPreview({
         </div>
       )}
 
-      {/* Action row */}
       <div className="px-4 py-3 flex items-center gap-4 text-gray-800">
         <HeartIcon /><CommentIcon /><ShareIcon />
         <div className="ml-auto"><BookmarkIcon /></div>
       </div>
 
-      {/* Caption */}
       <div className="px-4 pb-5">
         {!content && phase !== "generating" ? (
           <p className="text-sm text-gray-300 italic">Caption will appear here…</p>
@@ -218,9 +276,7 @@ function InstagramPreview({
                 <span className="inline-block w-0.5 h-4 bg-[#0F6E56] ml-0.5 animate-pulse align-middle" />
               )}
             </p>
-            {hashtags && (
-              <p className="text-sm text-[#0F6E56] mt-2 leading-relaxed">{hashtags}</p>
-            )}
+            {hashtags && <p className="text-sm text-[#0F6E56] mt-2 leading-relaxed">{hashtags}</p>}
           </>
         )}
       </div>
@@ -288,6 +344,16 @@ export default function GeneratePage() {
 
   async function handleApprove() {
     if (!content || saving) return;
+
+    // Reel scripts go to /review for formatted section editing
+    if (format === "reel script") {
+      sessionStorage.setItem("draft", JSON.stringify({
+        content, topic, format, platform, imageDataUrl: imageDataUrl ?? null,
+      }));
+      router.push("/review");
+      return;
+    }
+
     setSaving(true);
     try {
       await fetch("/api/posts", {
@@ -295,8 +361,7 @@ export default function GeneratePage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           content, topic, format, platform,
-          status: "approved",
-          scheduledDate: null,
+          status: "approved", scheduledDate: null,
           imageDataUrl: imageDataUrl ?? null,
         }),
       });
@@ -311,6 +376,8 @@ export default function GeneratePage() {
     abortRef.current?.abort();
     setContent(""); setPhase("idle"); setError(""); setApproved(false);
   }
+
+  const isReelScript = format === "reel script";
 
   return (
     <div>
@@ -337,12 +404,10 @@ export default function GeneratePage() {
 
             {/* Photo upload */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Photo <span className="text-gray-400 font-normal">(optional)</span></label>
-              <PhotoUpload
-                imageDataUrl={imageDataUrl}
-                onUpload={setImageDataUrl}
-                onRemove={() => setImageDataUrl(null)}
-              />
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Photo <span className="text-gray-400 font-normal">(optional)</span>
+              </label>
+              <PhotoUpload imageDataUrl={imageDataUrl} onUpload={setImageDataUrl} onRemove={() => setImageDataUrl(null)} />
             </div>
 
             {/* Format */}
@@ -350,11 +415,18 @@ export default function GeneratePage() {
               <label className="block text-sm font-medium text-gray-700 mb-2">Format</label>
               <div className="flex gap-2 flex-wrap">
                 {FORMATS.map((f) => (
-                  <button key={f} onClick={() => setFormat(f)}
-                    className={`px-4 py-2 rounded-xl text-sm font-medium capitalize border transition-colors ${format === f ? "bg-[#0F6E56] text-white border-[#0F6E56] shadow-sm" : "border-gray-200 text-gray-600 hover:border-gray-300 hover:bg-gray-50"}`}
+                  <button key={f} onClick={() => { setFormat(f); setContent(""); setPhase("idle"); }}
+                    className={`px-4 py-2 rounded-xl text-sm font-medium capitalize border transition-colors ${
+                      format === f ? "bg-[#0F6E56] text-white border-[#0F6E56] shadow-sm" : "border-gray-200 text-gray-600 hover:border-gray-300 hover:bg-gray-50"
+                    }`}
                   >{f}</button>
                 ))}
               </div>
+              {isReelScript && (
+                <p className="text-xs text-gray-400 mt-2">
+                  Generates a structured script — you&apos;ll review each section before saving.
+                </p>
+              )}
             </div>
 
             {/* Platform */}
@@ -363,7 +435,9 @@ export default function GeneratePage() {
               <div className="flex gap-2 flex-wrap">
                 {PLATFORMS.map((p) => (
                   <button key={p} onClick={() => setPlatform(p)}
-                    className={`px-4 py-2 rounded-xl text-sm font-medium border transition-colors ${platform === p ? "bg-[#0F6E56] text-white border-[#0F6E56] shadow-sm" : "border-gray-200 text-gray-600 hover:border-gray-300 hover:bg-gray-50"}`}
+                    className={`px-4 py-2 rounded-xl text-sm font-medium border transition-colors ${
+                      platform === p ? "bg-[#0F6E56] text-white border-[#0F6E56] shadow-sm" : "border-gray-200 text-gray-600 hover:border-gray-300 hover:bg-gray-50"
+                    }`}
                   >{p}</button>
                 ))}
               </div>
@@ -389,7 +463,7 @@ export default function GeneratePage() {
                 <button onClick={handleApprove} disabled={saving}
                   className="px-5 py-2.5 bg-white border border-[#0F6E56] text-[#0F6E56] rounded-xl text-sm font-medium hover:bg-[#E8F5F1] disabled:opacity-50 transition-colors shadow-sm"
                 >
-                  {saving ? "Saving…" : "Approve & Save"}
+                  {isReelScript ? "Review Script →" : saving ? "Saving…" : "Approve & Save"}
                 </button>
                 <button onClick={handleStartOver} className="px-4 py-2.5 text-sm text-gray-500 hover:text-gray-700 transition-colors">
                   Start over
@@ -408,12 +482,16 @@ export default function GeneratePage() {
           </div>
         </div>
 
-        {/* ── Right: Instagram preview ── */}
+        {/* ── Right: Preview ── */}
         <div className="flex flex-col items-center gap-3">
           <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest self-start lg:self-center">
-            Live Preview
+            {isReelScript ? "Script Preview" : "Live Preview"}
           </p>
-          <InstagramPreview content={content} brandName={brandName} phase={phase} imageDataUrl={imageDataUrl} />
+          {isReelScript ? (
+            <ReelScriptPreview content={content} phase={phase} />
+          ) : (
+            <InstagramPreview content={content} brandName={brandName} phase={phase} imageDataUrl={imageDataUrl} />
+          )}
         </div>
       </div>
     </div>

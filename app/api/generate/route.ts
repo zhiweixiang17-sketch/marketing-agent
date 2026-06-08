@@ -33,11 +33,23 @@ export async function POST(req: Request) {
 - Line 5: Soft CTA or genuine question that invites engagement
 - Then 2 blank lines
 - Then hashtags on their own line: exactly 15 hashtags — 5 broad, 5 medium, 5 niche`,
-    "reel script": `Write a short-form video script (15–30 seconds when read aloud).
-- Hook (0-3s): One punchy line that stops the scroll — sensory, surprising, or bold
-- Body (3-20s): The story or detail in natural spoken language, like talking to a friend
-- CTA (20-30s): A soft question or invitation, never a hard sell
-Label each section. Write it to be spoken aloud, not read — short sentences, natural pauses.`,
+    "reel script": `Write a short-form video script for a 15–30 second reel.
+
+Output EXACTLY in this format — each section header alone on its own line, followed by its content:
+
+HOOK
+[One punchy line that stops the scroll — sensory, surprising, or bold. Max 3 seconds when spoken aloud.]
+
+SCRIPT
+[The voiceover — 10–20 seconds when read aloud. Natural spoken language, like talking to a friend. Short sentences with natural pauses. Specific details: vintage year, grape variety, flavour notes. No bullet points — flowing speech.]
+
+ON-SCREEN TEXT
+[3–5 text overlay suggestions, one per line. Short phrases only, not full sentences. Examples: "2021 Harvest", "Hand-picked", "Estate grown", "90 points".]
+
+CTA
+[One soft closing line — a question or invitation, 3–5 seconds. Invites engagement or a visit. Never a hard sell.]
+
+Write everything as spoken language — contractions, fragments, natural rhythm.`,
     story: `Write a 3-slide Instagram/Facebook Story sequence.
 - Slide 1: Bold hook — one line, stops the scroll
 - Slide 2: The story or detail — 2-3 short lines, specific and human
