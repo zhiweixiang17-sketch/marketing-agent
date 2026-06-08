@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -150,9 +151,23 @@ function PostDetailModal({ post, onClose, onMarkPublished, onPublishToMeta }: {
   onMarkPublished: (id: string) => void;
   onPublishToMeta: (id: string) => Promise<void>;
 }) {
+  const router = useRouter();
   const [publishing, setPublishing] = useState(false);
   const [publishResult, setPublishResult] = useState<string | null>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
+
+  function handleEdit() {
+    sessionStorage.setItem("draft", JSON.stringify({
+      id: post.id,
+      content: post.content,
+      topic: post.topic,
+      format: post.format,
+      platform: post.platform,
+      imageDataUrl: post.imageDataUrl ?? null,
+      videoMeta: post.videoMeta ?? null,
+    }));
+    router.push("/review");
+  }
 
   // Close on ESC
   useEffect(() => {
@@ -299,6 +314,13 @@ function PostDetailModal({ post, onClose, onMarkPublished, onPublishToMeta }: {
             </>
           )}
           <CopyButton text={post.content} />
+          <button onClick={handleEdit}
+            className="flex items-center gap-1.5 text-sm px-4 py-2 border border-gray-200 bg-white text-gray-700 rounded-xl hover:bg-gray-50 transition-colors shadow-sm font-medium">
+            <svg className="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125" />
+            </svg>
+            Edit
+          </button>
           {publishResult && (
             <span className={`text-xs font-medium ml-1 ${publishResult.includes("✓") ? "text-[#0F6E56]" : "text-red-500"}`}>
               {publishResult}

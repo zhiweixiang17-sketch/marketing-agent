@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 type Draft = {
+  id?: string;          // present when editing an existing post
   content: string;
   topic: string;
   format: string;
@@ -154,13 +155,15 @@ export default function ReviewPage() {
   const isSectioned = defs !== null;
   const isBoth = draft.platform === "both";
 
+  const isEditing = Boolean(draft.id);
+
   // Heading
   const pageTitle =
-    draft.format === "reel script" ? "Review Reel Script" :
-    draft.format === "carousel"    ? "Review Carousel Slides" :
-    draft.format === "story"       ? "Review Story" :
-    isBoth                         ? "Review Both Versions" :
-    "Review & Approve";
+    draft.format === "reel script" ? (isEditing ? "Edit Reel Script"     : "Review Reel Script") :
+    draft.format === "carousel"    ? (isEditing ? "Edit Carousel Slides"  : "Review Carousel Slides") :
+    draft.format === "story"       ? (isEditing ? "Edit Story"            : "Review Story") :
+    isBoth                         ? (isEditing ? "Edit Both Versions"    : "Review Both Versions") :
+                                     (isEditing ? "Edit Post"             : "Review & Approve");
 
   // Build final content string for save
   function buildFinalContent(): string {
@@ -175,20 +178,40 @@ export default function ReviewPage() {
     if (!draft || saving) return;
     setSaving(true);
     try {
-      await fetch("/api/posts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          content: buildFinalContent(),
-          topic: draft.topic,
-          format: draft.format,
-          platform: draft.platform,
-          status: "approved",
-          scheduledDate: null,
-          imageDataUrl: draft.imageDataUrl ?? null,
-          videoMeta: draft.videoMeta ?? null,
-        }),
-      });
+      const finalContent = buildFinalContent();
+      if (draft.id) {
+        // Editing an existing post — PATCH it
+        await fetch("/api/posts", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id: draft.id,
+            content: finalContent,
+            topic: draft.topic,
+            format: draft.format,
+            platform: draft.platform,
+            status: "approved",
+            imageDataUrl: draft.imageDataUrl ?? null,
+            videoMeta: draft.videoMeta ?? null,
+          }),
+        });
+      } else {
+        // New post — POST it
+        await fetch("/api/posts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            content: finalContent,
+            topic: draft.topic,
+            format: draft.format,
+            platform: draft.platform,
+            status: "approved",
+            scheduledDate: null,
+            imageDataUrl: draft.imageDataUrl ?? null,
+            videoMeta: draft.videoMeta ?? null,
+          }),
+        });
+      }
       setApproved(true);
       sessionStorage.removeItem("draft");
       setTimeout(() => router.push("/dashboard"), 1000);
@@ -267,10 +290,10 @@ export default function ReviewPage() {
             className="px-5 py-2.5 bg-[#0F6E56] text-white rounded-xl text-sm font-medium hover:bg-[#0A5A45] disabled:opacity-50 transition-colors shadow-sm"
           >
             {approved
-              ? "✓ Approved"
+              ? "✓ Saved"
               : saving
               ? "Saving…"
-              : "Approve & Save"}
+              : isEditing ? "Save Changes" : "Approve & Save"}
           </button>
 
           <CopyButton
@@ -284,10 +307,10 @@ export default function ReviewPage() {
           />
 
           <button
-            onClick={() => router.push("/generate")}
+            onClick={() => router.push(isEditing ? "/dashboard" : "/generate")}
             className="px-5 py-2.5 border border-gray-200 bg-white text-gray-600 rounded-xl text-sm font-medium hover:bg-gray-50 transition-colors shadow-sm"
           >
-            Regenerate
+            {isEditing ? "Cancel" : "Regenerate"}
           </button>
 
           {approved && (
