@@ -1,105 +1,116 @@
 import { NextResponse } from "next/server";
 
-// Mood → Pixabay search queries (tried across multiple Pixabay API endpoints)
-const MOOD_QUERIES: Record<string, string> = {
-  Upbeat:   "upbeat happy",
-  Calm:     "calm relaxing",
-  Romantic: "romantic love",
-  Dramatic: "dramatic cinematic",
+/**
+ * Music API — returns a royalty-free audio track for a given mood.
+ *
+ * Source: Jamendo (jamendo.com) — the standard free music API for apps.
+ * Env var required: JAMENDO_CLIENT_ID
+ * Get a free client_id at: https://developer.jamendo.com/v3.0
+ * Registration takes ~2 minutes; no credit card required.
+ *
+ * The audio is proxied through this route so the browser can write it
+ * to FFmpeg's virtual filesystem without CORS restrictions.
+ */
+
+// Mood → Jamendo tag search terms
+const MOOD_TAGS: Record<string, string> = {
+  Upbeat:   "happy upbeat pop",
+  Calm:     "calm ambient relaxing",
+  Romantic: "romantic soft acoustic",
+  Dramatic: "dramatic cinematic orchestral",
 };
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
-  const mood  = searchParams.get("mood")  ?? "Calm";
-  const debug = searchParams.get("debug") === "true";
+  const mood = searchParams.get("mood") ?? "Calm";
 
-  const apiKey = process.env.PIXABAY_API_KEY;
-  if (!apiKey) {
+  const clientId = process.env.JAMENDO_CLIENT_ID;
+  if (!clientId) {
     return NextResponse.json(
-      { error: "PIXABAY_API_KEY not configured in environment variables." },
+      {
+        error: "JAMENDO_CLIENT_ID not configured.",
+        setup: "Get a free client ID at https://developer.jamendo.com/v3.0 (2-min registration) and add it to your Vercel environment variables.",
+      },
       { status: 400 }
     );
   }
 
-  const query = MOOD_QUERIES[mood] ?? MOOD_QUERIES.Calm;
+  const tags = MOOD_TAGS[mood] ?? MOOD_TAGS.Calm;
 
-  // ── Try Pixabay music/audio search ──────────────────────────────────────────
-  // Pixabay supports music via their standard API with media_type=music.
-  // The audio hit objects carry an `audio` field (direct MP3 URL).
-  let audioUrl: string | null = null;
-  let trackTitle = "Instrumental";
+  // ── Search Jamendo for CC-licensed tracks ─────────────────────────────────
+  let audioDownloadUrl: string | null = null;
+  let trackName = "Instrumental";
 
-  const endpoints = [
-    // Primary: media_type=music (Pixabay's audio search)
-    `https://pixabay.com/api/?key=${encodeURIComponent(apiKey)}&q=${encodeURIComponent(query)}&media_type=music&per_page=10`,
-    // Fallback: no media_type filter, broader search
-    `https://pixabay.com/api/?key=${encodeURIComponent(apiKey)}&q=${encodeURIComponent(query)}&per_page=10`,
-  ];
+  try {
+    const params = new URLSearchParams({
+      client_id:          clientId,
+      format:             "json",
+      limit:              "10",
+      tags:               tags,
+      audioformat:        "mp31",         // 128 kbps MP3
+      audiodlformat:      "mp31",
+      include:            "musicinfo",
+      order:              "popularity_month",
+    });
 
-  let rawDebugData: unknown = null;
+    const res  = await fetch(`https://api.jamendo.com/v3.0/tracks/?${params}`, {
+      next: { revalidate: 3600 },
+    });
+    const data = await res.json();
 
-  for (const url of endpoints) {
-    try {
-      const res  = await fetch(url, { next: { revalidate: 3600 } });
-      const data = await res.json();
-
-      if (debug) { rawDebugData = data; break; }
-
-      const hits: Record<string, unknown>[] = data.hits ?? [];
-      // Only accept hits that have an `audio` field with a URL (not an image hit)
-      const musicHits = hits.filter(
-        h => typeof h.audio === "string" && (h.audio as string).startsWith("http")
-      );
-
-      if (musicHits.length > 0) {
-        const track = musicHits[Math.floor(Math.random() * Math.min(musicHits.length, 5))];
-        audioUrl   = track.audio as string;
-        trackTitle = ((track.tags as string)?.split(",")?.[0]?.trim()) ?? "Instrumental";
-        break;
-      }
-    } catch (err) {
-      console.error("Pixabay search error:", err);
+    if (data.headers?.status !== "success") {
+      throw new Error(`Jamendo API error: ${JSON.stringify(data.headers)}`);
     }
+
+    // Filter to tracks where download is explicitly allowed
+    type JamendoTrack = {
+      name: string;
+      audiodownload: string;
+      audiodownload_allowed: boolean;
+    };
+    const downloadable: JamendoTrack[] = (data.results ?? []).filter(
+      (t: JamendoTrack) => t.audiodownload_allowed && t.audiodownload?.startsWith("http")
+    );
+
+    if (downloadable.length === 0) {
+      // Fall back: use streaming URL even if download flag is false
+      const allTracks: JamendoTrack[] = data.results ?? [];
+      const track = allTracks[Math.floor(Math.random() * Math.min(allTracks.length, 5))];
+      if (track?.audiodownload?.startsWith("http")) {
+        audioDownloadUrl = track.audiodownload;
+        trackName = track.name;
+      }
+    } else {
+      const pick = downloadable[Math.floor(Math.random() * Math.min(downloadable.length, 5))];
+      audioDownloadUrl = pick.audiodownload;
+      trackName = pick.name;
+    }
+  } catch (err) {
+    console.error("Jamendo API error:", err);
+    return NextResponse.json({ error: `Music API error: ${String(err)}` }, { status: 502 });
   }
 
-  // ── Debug: return raw API response ──────────────────────────────────────────
-  if (debug) {
-    return NextResponse.json({ query, rawDebugData });
-  }
-
-  if (!audioUrl) {
+  if (!audioDownloadUrl) {
     return NextResponse.json(
-      {
-        error:   "No audio tracks found on Pixabay for this mood.",
-        hint:    "Pixabay's music API may not be enabled for your API key tier. Visit pixabay.com/api/docs/ for details.",
-        mood,
-      },
+      { error: `No ${mood} tracks found on Jamendo. Try a different mood.` },
       { status: 404 }
     );
   }
 
-  // ── Proxy the audio bytes (avoids browser CORS restrictions) ────────────────
+  // ── Proxy the audio bytes to the browser ─────────────────────────────────
   try {
-    const audioRes = await fetch(audioUrl);
+    const audioRes = await fetch(audioDownloadUrl);
     if (!audioRes.ok) throw new Error(`Audio download failed: ${audioRes.status}`);
 
     const contentType = audioRes.headers.get("content-type") ?? "audio/mpeg";
+    const buffer      = await audioRes.arrayBuffer();
 
-    // Reject if Pixabay returned an image instead of audio
-    if (contentType.startsWith("image/")) {
-      return NextResponse.json(
-        { error: "Pixabay returned an image URL instead of audio — media_type=music may not be supported for this API key." },
-        { status: 502 }
-      );
-    }
-
-    const buffer = await audioRes.arrayBuffer();
     return new Response(buffer, {
       headers: {
         "Content-Type":        contentType.includes("audio") ? contentType : "audio/mpeg",
         "Content-Disposition": `inline; filename="music.mp3"`,
         "Cache-Control":       "public, max-age=3600",
-        "X-Track-Title":       trackTitle,
+        "X-Track-Name":        encodeURIComponent(trackName),
       },
     });
   } catch (err) {

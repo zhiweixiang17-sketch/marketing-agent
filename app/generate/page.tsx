@@ -944,7 +944,8 @@ export default function GeneratePage() {
                   ))}
                 </div>
                 <p className="text-xs text-gray-400 mt-1.5">
-                  Royalty-free music from Pixabay · requires <code className="text-[10px] bg-gray-100 px-1 rounded">PIXABAY_API_KEY</code>
+                  Royalty-free CC music from Jamendo · requires <code className="text-[10px] bg-gray-100 px-1 rounded">JAMENDO_CLIENT_ID</code> env var
+                  <span className="ml-1">· <a href="https://developer.jamendo.com/v3.0" target="_blank" rel="noopener" className="underline hover:text-gray-600">free key in 2 min</a></span>
                 </p>
               </div>
             )}
