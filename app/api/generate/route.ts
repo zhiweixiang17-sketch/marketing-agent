@@ -21,10 +21,13 @@ const toneDescriptions: Record<string, string> = {
 
 // Formats that produce a single structured output regardless of platform.
 // "Both" platform is only meaningful for feed post and reel.
-const SINGLE_PLATFORM_FORMATS = new Set(["story", "reel script", "voice-reel"]);
+const SINGLE_PLATFORM_FORMATS = new Set(["story", "reel script", "voice-reel", "reel-voice"]);
 
 export async function POST(req: Request) {
-  const { topic, format, platform } = await req.json();
+  const { topic, format, platform, includeVoiceover } = await req.json();
+
+  // When the reel format has voiceover toggled on, treat it as a combined format
+  const formatKey: string = format === "reel" && includeVoiceover ? "reel-voice" : format;
 
   const brand = readBrand();
   const toneDescription = toneDescriptions[brand.tone_of_voice] ?? brand.tone_of_voice;
@@ -92,6 +95,21 @@ CTA
 
 Write for the spoken word — contractions, natural rhythm, zero marketing jargon.`,
 
+    "reel-voice": `Write a short Instagram Reel caption AND a 30-second spoken voiceover script.
+The owner's voice will narrate the voiceover over a photo slideshow.
+
+Output EXACTLY in this format with each header on its own line:
+
+CAPTION
+[Short punchy Reel caption — hook line (stops scroll, under 8 words), 2-3 tight story sentences, soft CTA, 1 blank line, 5 hashtags: 2 trending-broad + 3 niche. Total under 80 words.]
+
+VOICEOVER
+Hook: [One bold opening line spoken aloud — max 10 words. Punchy, sensory, immediate.]
+[2-3 natural spoken sentences about the wine or moment. Conversational, intimate. Max 40 words total.]
+CTA: [One soft spoken closing invitation — max 10 words. e.g. "Come find us this weekend."]
+
+Total voiceover must be under 60 words. Write for the spoken word — contractions, natural rhythm, zero marketing jargon.`,
+
     // Backward compatibility
     caption: `Write an engaging feed post caption. STRUCTURE:
 - Line 1: Hook — scene, question, sensory detail (never a product name)
@@ -103,7 +121,7 @@ Write for the spoken word — contractions, natural rhythm, zero marketing jargo
 
   // ── Platform instructions ─────────────────────────────────────────────────
 
-  const isBothVersions = platform === "both" && !SINGLE_PLATFORM_FORMATS.has(format);
+  const isBothVersions = platform === "both" && !SINGLE_PLATFORM_FORMATS.has(formatKey);
 
   const platformNote = isBothVersions
     ? `Generate TWO separate versions using EXACTLY this structure:
@@ -140,11 +158,11 @@ RULES:
 
 ${platformNote}`;
 
-  const isStructured = SINGLE_PLATFORM_FORMATS.has(format) || isBothVersions;
+  const isStructured = SINGLE_PLATFORM_FORMATS.has(formatKey) || isBothVersions;
 
   const userPrompt = `Topic: ${topic}
 
-${formatInstructions[format] ?? formatInstructions["feed post"]}
+${formatInstructions[formatKey] ?? formatInstructions["feed post"]}
 
 ${isStructured
   ? "Output ONLY the formatted content — use the section headers exactly as shown. No preamble, no commentary."

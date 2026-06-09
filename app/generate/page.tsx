@@ -4,6 +4,8 @@ import dynamic from "next/dynamic";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { ReelMood } from "./ReelCreator";
+import { VOICE_LIBRARY, VOICE_SAMPLE_TEXT } from "@/voices.config";
+import type { VoiceEntry } from "@/voices.config";
 
 // Lazy-load the heavy FFmpeg components (only downloaded when used)
 const ReelCreator = dynamic(() => import("./ReelCreator"), { ssr: false });
@@ -59,15 +61,7 @@ function parseGenericSections(text: string, keys: readonly string[]): Record<str
   return result;
 }
 
-// Library voices for Voice Reel
-const LIBRARY_VOICES = [
-  { id: "21m00Tcm4TlvDq8ikWAM", name: "Rachel",  style: "Warm Female"           },
-  { id: "TxGEqnHWrfWFTfGW9XjX", name: "Josh",    style: "Warm Male"             },
-  { id: "EXAVITQu4vr4xnSDxMaL", name: "Bella",   style: "Authoritative Female"  },
-  { id: "VR6AewLTigWG4xSOukaG", name: "Arnold",  style: "Authoritative Male"    },
-  { id: "MF3mGyEYCl7XYWbV9V6O", name: "Elli",    style: "Enthusiastic Female"   },
-  { id: "ErXwobaYiN019PkySvjV", name: "Antoni",  style: "Enthusiastic Male"     },
-] as const;
+// LIBRARY_VOICES now lives in voices.config.ts — imported above
 
 // Reel Script sections (Feature 2)
 const REEL_KEYS = ["HOOK", "SCRIPT", "ON-SCREEN TEXT", "CTA"] as const;
@@ -652,6 +646,64 @@ function GalleryPreview({ images, content, brandName, phase }: {
   );
 }
 
+// ── Reel + Voiceover combined preview ─────────────────────────────────────────
+
+function parseReelWithVoice(text: string): { caption: string; voiceover: string } {
+  const result = { caption: "", voiceover: "" };
+  let current: "caption" | "voiceover" | null = null;
+  const buf: string[] = [];
+  for (const line of text.split("\n")) {
+    const up = line.trim().toUpperCase();
+    if (up === "CAPTION") {
+      if (current === "caption") result.caption = buf.splice(0).join("\n").trim();
+      current = "caption";
+    } else if (up === "VOICEOVER") {
+      if (current === "caption") result.caption = buf.splice(0).join("\n").trim();
+      current = "voiceover";
+    } else if (current) {
+      buf.push(line);
+    }
+  }
+  if (current === "caption") result.caption = buf.join("\n").trim();
+  if (current === "voiceover") result.voiceover = buf.join("\n").trim();
+  return result;
+}
+
+function ReelWithVoicePreview({ content, brandName, phase, videoObjectUrl }: {
+  content: string; brandName: string; phase: Phase; videoObjectUrl: string | null;
+}) {
+  const { caption, voiceover } = parseReelWithVoice(content);
+  return (
+    <div className="space-y-3 w-full">
+      <ReelPostPreview
+        content={caption}
+        brandName={brandName}
+        phase={phase}
+        videoObjectUrl={videoObjectUrl}
+      />
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden w-full">
+        <div className="px-5 py-4 border-b border-gray-100 flex items-center gap-3">
+          <div className="w-8 h-8 rounded-lg bg-[#0F6E56]/10 flex items-center justify-center text-base select-none">🎤</div>
+          <div className="flex-1">
+            <p className="text-sm font-semibold text-gray-900">Voiceover Script</p>
+            <p className="text-xs text-gray-400">30 seconds · spoken aloud</p>
+          </div>
+          {phase === "generating" && <Spinner className="h-4 w-4" />}
+        </div>
+        <div className="px-5 py-4">
+          {voiceover ? (
+            <p className="text-sm text-gray-800 whitespace-pre-wrap leading-relaxed">{voiceover}</p>
+          ) : (
+            <p className="text-sm text-gray-300 italic">
+              {phase === "generating" ? "Writing voiceover…" : "—"}
+            </p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function GeneratePage() {
@@ -670,9 +722,13 @@ export default function GeneratePage() {
   const [approved, setApproved] = useState(false);
   const [editId, setEditId] = useState<string | null>(null); // set when re-generating an existing post
 
-  // Voice Reel state
-  const [voiceId, setVoiceId] = useState<string>("21m00Tcm4TlvDq8ikWAM");
-  const [voiceName, setVoiceName] = useState<string>("Rachel");
+  // Voice state (shared between voice-reel format and reel + voiceover toggle)
+  const [voiceId, setVoiceId] = useState<string>(VOICE_LIBRARY[0].id);
+  const [voiceName, setVoiceName] = useState<string>(VOICE_LIBRARY[0].name);
+  const [voices, setVoices] = useState<VoiceEntry[]>(VOICE_LIBRARY);
+  const [includeVoiceover, setIncludeVoiceover] = useState(false);
+  const [playingVoiceId, setPlayingVoiceId] = useState<string | null>(null);
+  const [playError, setPlayError] = useState<string | null>(null);
 
   // Photo-to-Reel state
   const [mood, setMood] = useState<ReelMood>("Calm");
@@ -685,7 +741,12 @@ export default function GeneratePage() {
   useEffect(() => {
     fetch("/api/brand").then(r => r.json()).then(d => setBrandName(d.business_name ?? "Your Business")).catch(() => {});
 
-    // Load saved voice settings from localStorage
+    // Fetch live voice list (verified against ElevenLabs if API key is set)
+    fetch("/api/voices").then(r => r.json()).then((v: VoiceEntry[]) => {
+      if (Array.isArray(v) && v.length > 0) setVoices(v);
+    }).catch(() => {});
+
+    // Load saved voice settings from localStorage (cloned voice or last selection)
     try {
       const saved = localStorage.getItem("voiceSettings");
       if (saved) {
@@ -724,8 +785,34 @@ export default function GeneratePage() {
   function handleFormatChange(f: Format) {
     setFormat(f);
     setContent(""); setPhase("idle"); setError(""); setApproved(false);
+    setIncludeVoiceover(false);
     // If new format doesn't support "both", revert to Instagram
     if (platform === "both" && !BOTH_COMPATIBLE.has(f)) setPlatform("Instagram");
+  }
+
+  async function handlePlayVoice(vId: string) {
+    setPlayingVoiceId(vId);
+    setPlayError(null);
+    try {
+      const res = await fetch("/api/voice", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ voiceId: vId, text: VOICE_SAMPLE_TEXT }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({})) as { error?: string };
+        throw new Error(err.error ?? `Voice API error ${res.status}`);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      audio.onended = () => { setPlayingVoiceId(null); URL.revokeObjectURL(url); };
+      audio.onerror = () => { setPlayingVoiceId(null); };
+      await audio.play();
+    } catch (e) {
+      setPlayingVoiceId(null);
+      setPlayError(e instanceof Error ? e.message : "Could not preview voice");
+    }
   }
 
   async function handleGenerate() {
@@ -739,7 +826,10 @@ export default function GeneratePage() {
       const res = await fetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ topic, format, platform }),
+        body: JSON.stringify({
+          topic, format, platform,
+          includeVoiceover: format === "reel" && includeVoiceover,
+        }),
         signal: controller.signal,
       });
       if (!res.ok) {
@@ -766,7 +856,8 @@ export default function GeneratePage() {
   // Formats that always route through /review for section-based editing
   // Also: multiple photos need review to confirm the single caption
   const isBothVersions = platform === "both" && BOTH_COMPATIBLE.has(format);
-  const needsReview = NEEDS_REVIEW_FORMATS.has(format) || isBothVersions || images.length > 1;
+  const isReelWithVoice = format === "reel" && includeVoiceover;
+  const needsReview = NEEDS_REVIEW_FORMATS.has(format) || isBothVersions || images.length > 1 || isReelWithVoice;
 
   async function handleApprove() {
     if (!content || saving) return;
@@ -778,13 +869,15 @@ export default function GeneratePage() {
     } : { images: null, imageDataUrl: null };
 
     if (needsReview) {
+      const needsVoiceData = format === "voice-reel" || isReelWithVoice;
       sessionStorage.setItem("draft", JSON.stringify({
         ...(editId ? { id: editId } : {}),
         content, topic, format, platform,
         ...imagePayload,
         videoMeta,
-        voiceId: format === "voice-reel" ? voiceId : undefined,
-        voiceName: format === "voice-reel" ? voiceName : undefined,
+        voiceId:          needsVoiceData ? voiceId : undefined,
+        voiceName:        needsVoiceData ? voiceName : undefined,
+        includeVoiceover: isReelWithVoice ? true : undefined,
       }));
       router.push("/review");
       return;
@@ -845,6 +938,7 @@ export default function GeneratePage() {
     format === "reel script" ? "Script Preview" :
     format === "voice-reel"  ? "Voice Reel Script" :
     format === "story"       ? "Story Preview" :
+    isReelWithVoice          ? "Caption + Voiceover" :
     isPhotoReel              ? "Reel Preview" :
     format === "reel"        ? "Reel Preview" :
     images.length > 1        ? "Gallery Preview" :
@@ -870,6 +964,8 @@ export default function GeneratePage() {
     <VoiceReelScriptPreview content={content} phase={phase} />
   ) : format === "story" ? (
     <StoryPreview content={content} phase={phase} />
+  ) : isReelWithVoice ? (
+    <ReelWithVoicePreview content={content} brandName={brandName} phase={phase} videoObjectUrl={effectiveVideoUrl} />
   ) : format === "reel" ? (
     <ReelPostPreview content={content} brandName={brandName} phase={phase} videoObjectUrl={effectiveVideoUrl} />
   ) : images.length > 1 ? (
@@ -879,10 +975,11 @@ export default function GeneratePage() {
   );
 
   const approveButtonLabel = needsReview
-    ? format === "reel script" ? "Review Script →"
-    : format === "voice-reel"  ? "Review Voice Script →"
-    : format === "story"       ? "Review Story →"
-    : images.length > 1        ? "Review Gallery →"
+    ? format === "reel script"   ? "Review Script →"
+    : format === "voice-reel"    ? "Review Voice Script →"
+    : format === "story"         ? "Review Story →"
+    : isReelWithVoice            ? "Review & Build Reel →"
+    : images.length > 1         ? "Review Gallery →"
     : "Review Versions →"
     : saving ? "Saving…" : "Approve & Save";
 
@@ -1004,21 +1101,112 @@ export default function GeneratePage() {
               )}
             </div>
 
-            {/* Voice selector — shown for Voice Reel format */}
+            {/* Voice section — toggle + card grid for Reel format */}
+            {format === "reel" && (
+              <div className="space-y-3">
+                {/* Include voiceover toggle */}
+                <div className="flex items-center justify-between">
+                  <div>
+                    <label className="text-sm font-medium text-gray-700">Include Voiceover</label>
+                    <p className="text-xs text-gray-400 mt-0.5">Claude writes a script · ElevenLabs reads it aloud</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIncludeVoiceover(v => !v)}
+                    className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors focus:outline-none ${
+                      includeVoiceover ? "bg-[#0F6E56]" : "bg-gray-200"
+                    }`}
+                  >
+                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+                      includeVoiceover ? "translate-x-6" : "translate-x-1"
+                    }`} />
+                  </button>
+                </div>
+
+                {/* Voice card grid — 2 columns × 3 rows */}
+                {includeVoiceover && (
+                  <div className="space-y-2">
+                    <div className="grid grid-cols-2 gap-2">
+                      {voices.map(voice => {
+                        const isSelected = voiceId === voice.id;
+                        const isPlaying  = playingVoiceId === voice.id;
+                        return (
+                          <div
+                            key={voice.id}
+                            className={`rounded-xl border p-3 transition-all ${
+                              isSelected
+                                ? "border-[#0F6E56] bg-[#E8F5F1] shadow-sm"
+                                : "border-gray-200 bg-white hover:border-gray-300"
+                            }`}
+                          >
+                            <p className="text-xs font-semibold text-gray-900 leading-snug">{voice.label}</p>
+                            <p className="text-[11px] text-gray-500 mt-0.5 mb-2.5 leading-snug">{voice.description}</p>
+                            <div className="flex gap-1.5">
+                              {/* Play button */}
+                              <button
+                                type="button"
+                                onClick={() => handlePlayVoice(voice.id)}
+                                disabled={playingVoiceId !== null}
+                                className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-50 transition-colors shrink-0"
+                              >
+                                {isPlaying ? (
+                                  <><span className="animate-pulse text-[#0F6E56]">♪</span>&nbsp;Playing</>
+                                ) : (
+                                  <>
+                                    <svg className="w-2.5 h-2.5" fill="currentColor" viewBox="0 0 24 24">
+                                      <path d="M8 5v14l11-7z" />
+                                    </svg>
+                                    Play
+                                  </>
+                                )}
+                              </button>
+                              {/* Select button */}
+                              <button
+                                type="button"
+                                onClick={() => { setVoiceId(voice.id); setVoiceName(voice.name); }}
+                                className={`flex-1 px-2 py-1 rounded-lg text-[11px] font-medium transition-colors ${
+                                  isSelected
+                                    ? "bg-[#0F6E56] text-white"
+                                    : "border border-gray-200 text-gray-600 hover:bg-gray-50"
+                                }`}
+                              >
+                                {isSelected ? "✓ Selected" : "Select"}
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {playError && (
+                      <p className="text-xs text-red-500 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                        {playError}
+                      </p>
+                    )}
+                    <p className="text-[11px] text-gray-400">
+                      <a href="/setup#voice" className="text-[#0F6E56] hover:underline">
+                        🎤 Clone your own voice in Setup →
+                      </a>
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Voice selector — legacy Voice Reel format */}
             {format === "voice-reel" && (
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">Voice</label>
                 <select
                   value={voiceId}
                   onChange={(e) => {
-                    const selected = LIBRARY_VOICES.find(v => v.id === e.target.value);
+                    const selected = voices.find(v => v.id === e.target.value);
                     setVoiceId(e.target.value);
                     if (selected) setVoiceName(selected.name);
                   }}
                   className="w-full border border-gray-200 rounded-xl px-3.5 py-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#0F6E56]/25 focus:border-[#0F6E56] transition-colors bg-white"
                 >
-                  {LIBRARY_VOICES.map(v => (
-                    <option key={v.id} value={v.id}>{v.name} — {v.style}</option>
+                  {voices.map(v => (
+                    <option key={v.id} value={v.id}>{v.name} — {v.label}</option>
                   ))}
                 </select>
                 <p className="text-xs text-gray-400 mt-1.5">

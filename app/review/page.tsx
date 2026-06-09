@@ -19,6 +19,7 @@ type Draft = {
   videoMeta?: { name: string; size: number; type: string } | null;
   voiceId?: string;
   voiceName?: string;
+  includeVoiceover?: boolean;   // reel format + voice toggle
 };
 
 type SectionDef = {
@@ -31,7 +32,7 @@ type SectionDef = {
 
 // ── Section definitions ───────────────────────────────────────────────────────
 
-function getSectionDefs(format: string, platform: string): SectionDef[] | null {
+function getSectionDefs(format: string, platform: string, includeVoiceover?: boolean): SectionDef[] | null {
   // "Both" platform — show Instagram & Facebook side-by-side
   if (platform === "both") {
     return [
@@ -60,7 +61,14 @@ function getSectionDefs(format: string, platform: string): SectionDef[] | null {
       { key: "CTA",   label: "Call to Action", icon: "👋", hint: "20-30 sec · soft invitation",   rows: 2 },
     ];
   }
-  return null; // single textarea for feed post, reel
+  // Reel format with voiceover toggle
+  if (format === "reel" && includeVoiceover) {
+    return [
+      { key: "CAPTION",   label: "Caption",          icon: "📝", hint: "Your Instagram caption + hashtags",                  rows: 8 },
+      { key: "VOICEOVER", label: "Voiceover Script", icon: "🎙️", hint: "Edit before generating audio · max 60 words",         rows: 5 },
+    ];
+  }
+  return null; // single textarea for feed post, reel (no voiceover)
 }
 
 // ── Parsing & reconstruction ──────────────────────────────────────────────────
@@ -198,7 +206,7 @@ export default function ReviewPage() {
       const d = JSON.parse(raw) as Draft;
       setDraft(d);
       setContent(d.content);
-      const defs = getSectionDefs(d.format, d.platform);
+      const defs = getSectionDefs(d.format, d.platform, d.includeVoiceover);
       if (defs) {
         setSections(parseSections(d.content, defs));
       }
@@ -217,10 +225,11 @@ export default function ReviewPage() {
     );
   }
 
-  const defs = getSectionDefs(draft.format, draft.platform);
+  const defs = getSectionDefs(draft.format, draft.platform, draft.includeVoiceover);
   const isSectioned = defs !== null;
   const isBoth = draft.platform === "both";
   const isEditing = Boolean(draft.id);
+  const isReelWithVoice = draft.format === "reel" && draft.includeVoiceover;
 
   // Resolve photos: prefer images array, fall back to legacy imageDataUrl
   const photoImages: string[] = draft.images?.length
@@ -233,30 +242,38 @@ export default function ReviewPage() {
   const pageTitle =
     draft.format === "reel script" ? (isEditing ? "Edit Reel Script"  : "Review Reel Script") :
     draft.format === "voice-reel"  ? (isEditing ? "Edit Voice Reel"   : "Review Voice Reel") :
+    isReelWithVoice                ? (isEditing ? "Edit Reel"          : "Review & Build Reel") :
     draft.format === "story"       ? (isEditing ? "Edit Story"         : "Review Story") :
     isBoth                         ? (isEditing ? "Edit Both Versions" : "Review Both Versions") :
     photoImages.length > 1         ? (isEditing ? "Edit Gallery Post"  : "Review Gallery Post") :
                                      (isEditing ? "Edit Post"          : "Review & Approve");
 
-  // Build final content string for save
+  // Build final content string for save.
+  // Reel + voiceover: save only the caption section as the post content.
   function buildFinalContent(): string {
-    if (isSectioned && defs) return reconstructSections(defs, sections);
+    if (isSectioned && defs) {
+      if (isReelWithVoice) return sections["CAPTION"] ?? content;
+      return reconstructSections(defs, sections);
+    }
     return content;
   }
 
-  // Build copy text (same as final content)
-  const copyText = buildFinalContent();
+  // Copy text: for reel+voice, copy just the caption (not the voiceover)
+  const copyText = isReelWithVoice ? (sections["CAPTION"] ?? content) : buildFinalContent();
 
   async function handleGenerateVoice() {
     if (!draft || generatingVoice) return;
     setGeneratingVoice(true);
     setVoiceError(null);
+    // Use VOICEOVER section for reel+voice, or full script for voice-reel
+    const voiceScript = isReelWithVoice
+      ? (sections["VOICEOVER"] ?? content)
+      : (defs ? reconstructSections(defs, sections) : content);
     try {
-      const fullScript = defs ? reconstructSections(defs, sections) : content;
       const res = await fetch("/api/voice", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ voiceId: draft.voiceId, text: fullScript }),
+        body: JSON.stringify({ voiceId: draft.voiceId, text: voiceScript }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
@@ -266,7 +283,9 @@ export default function ReviewPage() {
       const arrayBuf = await blob.arrayBuffer();
       setVoiceBlob(blob);
       setVoiceoverData(new Uint8Array(arrayBuf));
-      setCreatingVoiceReel(true);
+      // For voice-reel, start building immediately.
+      // For reel+voice, the user listens and clicks "Build Reel" manually.
+      if (!isReelWithVoice) setCreatingVoiceReel(true);
     } catch (e) {
       setVoiceError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -372,11 +391,7 @@ export default function ReviewPage() {
             disabled={saving || approved}
             className="px-5 py-2.5 bg-[#0F6E56] text-white rounded-xl text-sm font-medium hover:bg-[#0A5A45] disabled:opacity-50 transition-colors shadow-sm"
           >
-            {approved
-              ? "✓ Saved"
-              : saving
-              ? "Saving…"
-              : isEditing ? "Save Changes" : "Approve & Save"}
+            {approved ? "✓ Saved" : saving ? "Saving…" : isEditing ? "Save Changes" : "Approve & Save"}
           </button>
 
           <CopyButton
@@ -384,12 +399,69 @@ export default function ReviewPage() {
             label={
               draft.format === "reel script" ? "Copy Script" :
               draft.format === "voice-reel"  ? "Copy Script" :
+              isReelWithVoice                ? "Copy Caption" :
               isBoth                         ? "Copy Both Versions" :
               "Copy"
             }
           />
 
-          {/* Voice Reel generation controls */}
+          {/* ── Reel + Voiceover: audio generation + Build Reel ── */}
+          {isReelWithVoice && (
+            <div className="w-full flex flex-col gap-3">
+              {/* Voice info + Generate Audio button */}
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="text-xs text-gray-500">
+                  🎤 Voice: <span className="font-medium text-gray-700">{draft.voiceName ?? "Selected"}</span>
+                </span>
+                <button
+                  onClick={handleGenerateVoice}
+                  disabled={generatingVoice || creatingVoiceReel}
+                  className="flex items-center gap-2 px-4 py-2 bg-[#0F6E56] text-white rounded-xl text-sm font-medium hover:bg-[#0A5A45] disabled:opacity-50 transition-colors shadow-sm"
+                >
+                  {generatingVoice ? (
+                    <>
+                      <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                      </svg>
+                      Generating audio…
+                    </>
+                  ) : voiceBlob ? (
+                    "↺ Regenerate Audio"
+                  ) : (
+                    "🔊 Generate Voiceover Audio"
+                  )}
+                </button>
+              </div>
+
+              {/* Audio player — shows once audio is ready */}
+              {voiceBlob && !creatingVoiceReel && !voiceReelUrl && (
+                <div className="bg-white border border-gray-200 rounded-xl px-4 py-3 space-y-2.5">
+                  <p className="text-xs font-medium text-gray-700">Listen to your voiceover:</p>
+                  {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+                  <audio
+                    src={URL.createObjectURL(voiceBlob)}
+                    controls
+                    className="w-full h-10"
+                  />
+                  <button
+                    onClick={() => setCreatingVoiceReel(true)}
+                    className="w-full flex items-center justify-center gap-2 px-5 py-2.5 bg-[#0F6E56] text-white rounded-xl text-sm font-semibold hover:bg-[#0A5A45] transition-colors shadow-sm"
+                  >
+                    🎬 Build Reel
+                  </button>
+                </div>
+              )}
+
+              {voiceError && (
+                <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-xl px-3 py-2">
+                  {voiceError}
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* ── Legacy Voice Reel generation controls ── */}
           {draft.format === "voice-reel" && (
             <>
               <button
@@ -431,7 +503,6 @@ export default function ReviewPage() {
 
           {isEditing ? (
             <>
-              {/* Regenerate: go back to /generate with form pre-filled */}
               <button
                 onClick={() => {
                   sessionStorage.setItem("regenerate", JSON.stringify({
@@ -451,7 +522,6 @@ export default function ReviewPage() {
                 </svg>
                 Regenerate
               </button>
-              {/* Cancel: discard and return to dashboard */}
               <button
                 onClick={() => router.push("/dashboard")}
                 className="px-5 py-2.5 border border-gray-200 bg-white text-gray-600 rounded-xl text-sm font-medium hover:bg-gray-50 transition-colors shadow-sm"
@@ -479,13 +549,17 @@ export default function ReviewPage() {
         </div>
       </div>
 
-      {/* VoiceReelCreator — renders when voice has been generated */}
-      {creatingVoiceReel && voiceBlob && voiceoverData && (
+      {/* ── VoiceReelCreator — FFmpeg progress ── */}
+      {creatingVoiceReel && voiceoverData && (
         <div className="mt-6">
           <VoiceReelCreator
-            images={photoImages.length > 0 ? photoImages : ["/placeholder.jpg"]}
+            images={photoImages.length > 0 ? photoImages : []}
             voiceoverData={voiceoverData}
-            hookText={sections["HOOK"] ?? ""}
+            hookText={
+              isReelWithVoice
+                ? (sections["VOICEOVER"] ?? "").split("\n").find(l => l.trim())?.replace(/^hook:\s*/i, "").trim() ?? ""
+                : (sections["HOOK"] ?? "")
+            }
             mood="Calm"
             onComplete={(blob) => {
               const url = URL.createObjectURL(blob);
@@ -499,23 +573,43 @@ export default function ReviewPage() {
         </div>
       )}
 
-      {/* Generated voice reel video player + download */}
+      {/* ── Generated Reel: video preview + action buttons ── */}
       {voiceReelUrl && (
         <div className="mt-6 bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
-          <video src={voiceReelUrl} className="w-full max-h-96 bg-black" controls />
-          <div className="px-5 py-4 flex gap-3 items-center">
-            <button
-              onClick={() => {
-                const a = document.createElement("a");
-                a.href = voiceReelUrl;
-                a.download = `voice-reel-${Date.now()}.mp4`;
-                a.click();
-              }}
-              className="px-5 py-2.5 bg-[#0F6E56] text-white rounded-xl text-sm font-medium hover:bg-[#0A5A45] transition-colors shadow-sm"
-            >
-              ⬇ Download Voice Reel
-            </button>
-            <p className="text-xs text-gray-400">Ready for Instagram Reels · 1080×1920 · MP4</p>
+          {/* Video preview */}
+          <video src={voiceReelUrl} className="w-full max-h-[640px] bg-black" controls />
+
+          {/* Action buttons */}
+          <div className="px-5 py-4 space-y-3">
+            <div className="flex flex-wrap gap-3">
+              {/* Download Reel */}
+              <button
+                onClick={() => {
+                  const a = document.createElement("a");
+                  a.href = voiceReelUrl;
+                  a.download = `reel-${Date.now()}.mp4`;
+                  a.click();
+                }}
+                className="flex items-center gap-2 px-5 py-2.5 bg-[#0F6E56] text-white rounded-xl text-sm font-medium hover:bg-[#0A5A45] transition-colors shadow-sm"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                </svg>
+                Download Reel
+              </button>
+
+              {/* Copy Caption */}
+              <CopyButton text={copyText} label="Copy Caption" />
+            </div>
+
+            {/* Music tip */}
+            <div className="flex items-start gap-2.5 px-4 py-3 bg-amber-50 border border-amber-200 rounded-xl">
+              <span className="text-base shrink-0">💡</span>
+              <p className="text-xs text-amber-800 leading-relaxed">
+                <span className="font-semibold">Tip:</span> Open Instagram → select this Reel → tap{" "}
+                <strong>Add Music</strong> from Instagram&apos;s library before posting for maximum reach.
+              </p>
+            </div>
           </div>
         </div>
       )}
