@@ -4,8 +4,8 @@ import dynamic from "next/dynamic";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { ReelMood } from "./ReelCreator";
-import { VOICE_LIBRARY, VOICE_SAMPLE_TEXT } from "@/voices.config";
-import type { VoiceEntry } from "@/voices.config";
+import { VOICE_SAMPLE_TEXT } from "@/voices.config";
+import type { AccountVoice } from "@/app/api/voices/route";
 
 // Lazy-load the heavy FFmpeg components (only downloaded when used)
 const ReelCreator = dynamic(() => import("./ReelCreator"), { ssr: false });
@@ -723,9 +723,11 @@ export default function GeneratePage() {
   const [editId, setEditId] = useState<string | null>(null); // set when re-generating an existing post
 
   // Voice state (shared between voice-reel format and reel + voiceover toggle)
-  const [voiceId, setVoiceId] = useState<string>(VOICE_LIBRARY[0].id);
-  const [voiceName, setVoiceName] = useState<string>(VOICE_LIBRARY[0].name);
-  const [voices, setVoices] = useState<VoiceEntry[]>(VOICE_LIBRARY);
+  const [voiceId, setVoiceId] = useState<string>("");
+  const [voiceName, setVoiceName] = useState<string>("");
+  const [voices, setVoices] = useState<AccountVoice[]>([]);
+  const [voicesLoading, setVoicesLoading] = useState(false);
+  const [voicesError, setVoicesError] = useState<string | null>(null);
   const [includeVoiceover, setIncludeVoiceover] = useState(false);
   const [playingVoiceId, setPlayingVoiceId] = useState<string | null>(null);
   const [playError, setPlayError] = useState<string | null>(null);
@@ -741,18 +743,30 @@ export default function GeneratePage() {
   useEffect(() => {
     fetch("/api/brand").then(r => r.json()).then(d => setBrandName(d.business_name ?? "Your Business")).catch(() => {});
 
-    // Fetch live voice list (verified against ElevenLabs if API key is set)
-    fetch("/api/voices").then(r => r.json()).then((v: VoiceEntry[]) => {
-      if (Array.isArray(v) && v.length > 0) setVoices(v);
-    }).catch(() => {});
+    // Fetch voices actually available on this ElevenLabs account
+    setVoicesLoading(true);
+    fetch("/api/voices")
+      .then(r => r.json())
+      .then((v: AccountVoice[] | { error: string }) => {
+        if (Array.isArray(v) && v.length > 0) {
+          setVoices(v);
+          // Auto-select first voice (if no saved preference)
+          setVoiceId(prev => prev || v[0].id);
+          setVoiceName(prev => prev || v[0].name);
+        } else if (!Array.isArray(v) && v.error) {
+          setVoicesError(v.error);
+        }
+      })
+      .catch(() => setVoicesError("Could not load voices — check your ElevenLabs API key."))
+      .finally(() => setVoicesLoading(false));
 
-    // Load saved voice settings from localStorage (cloned voice or last selection)
+    // Load saved voice settings from localStorage — wins over account default
     try {
       const saved = localStorage.getItem("voiceSettings");
       if (saved) {
         const v = JSON.parse(saved) as { voiceId: string; voiceName: string };
-        setVoiceId(v.voiceId);
-        setVoiceName(v.voiceName);
+        if (v.voiceId) setVoiceId(v.voiceId);
+        if (v.voiceName) setVoiceName(v.voiceName);
       }
     } catch { /* ignore */ }
 
@@ -1126,6 +1140,32 @@ export default function GeneratePage() {
                 {/* Voice card grid — 2 columns × 3 rows */}
                 {includeVoiceover && (
                   <div className="space-y-2">
+                    {voicesLoading && (
+                      <div className="flex items-center gap-2 text-xs text-gray-400 py-2">
+                        <Spinner className="h-3.5 w-3.5" /> Loading voices from ElevenLabs…
+                      </div>
+                    )}
+                    {voicesError && (
+                      <div className="rounded-xl bg-amber-50 border border-amber-200 px-3 py-2.5 text-xs text-amber-800">
+                        <p className="font-medium mb-0.5">Could not load voices</p>
+                        <p>{voicesError}</p>
+                        <p className="mt-1 text-amber-600">
+                          Free accounts can only use voices they&apos;ve created.{" "}
+                          <a href="/setup#voice" className="underline font-medium">Clone your voice in Setup →</a>
+                        </p>
+                      </div>
+                    )}
+                    {!voicesLoading && !voicesError && voices.length === 0 && (
+                      <div className="rounded-xl bg-amber-50 border border-amber-200 px-3 py-2.5 text-xs text-amber-800">
+                        <p className="font-medium mb-0.5">No voices available on your account</p>
+                        <p>ElevenLabs free plan requires you to clone your own voice before using the API.</p>
+                        <p className="mt-1">
+                          <a href="/setup#voice" className="underline font-medium text-[#0F6E56]">
+                            🎤 Record your voice in Setup (takes 30 seconds) →
+                          </a>
+                        </p>
+                      </div>
+                    )}
                     <div className="grid grid-cols-2 gap-2">
                       {voices.map(voice => {
                         const isSelected = voiceId === voice.id;
