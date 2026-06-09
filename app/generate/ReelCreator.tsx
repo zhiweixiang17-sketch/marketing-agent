@@ -40,7 +40,7 @@ function buildSubtitleText(caption: string): string {
   const truncated = clean.length > 72 ? clean.slice(0, 69) + "..." : clean;
   return truncated
     .replace(/\\/g, "\\\\")
-    .replace(/'/g, "’")  // right single quote — safe in drawtext
+    .replace(/'/g, "’")  // curly apostrophe — safe in drawtext
     .replace(/:/g, "\\:")
     .replace(/\[/g, "\\[")
     .replace(/\]/g, "\\]");
@@ -55,87 +55,90 @@ export default function ReelCreator({ images, caption, mood, onComplete, onError
 
   const run = useCallback(async () => {
     cancelled.current = false;
+    const ffmpegLogs: string[] = [];
 
     try {
-      // ── 1. Load FFmpeg (ESM import) + WASM core ────────────────────────
-      //
-      // WHY classWorkerURL?
-      //
-      // @ffmpeg/ffmpeg's ESM classes.js has:
-      //   new Worker(new URL("./worker.js", import.meta.url), {type:"module"})
-      //
-      // webpack bundles worker.js into a chunk and replaces its dynamic
-      // `import(_coreURL)` with `__webpack_require__()`, which throws
-      // "Cannot find module as expression is too dynamic" at runtime.
-      //
-      // classWorkerURL bypasses the webpack-bundled worker entirely.
-      // At runtime the FFmpeg class instead creates:
-      //   new Worker(new URL(classWorkerURL, import.meta.url))
-      //
-      // We serve the real, unprocessed worker.js from /public/ffmpeg-esm/.
-      // Its relative imports (./const.js, ./errors.js) resolve same-origin,
-      // and its native import(blobUrl) works without webpack interception.
-      //
+      // ── 1. Load FFmpeg ─────────────────────────────────────────────────
       setStatusText("Loading FFmpeg…");
       setProgress(3);
 
       const { FFmpeg } = await import("@ffmpeg/ffmpeg");
-
       if (cancelled.current) return;
 
       const ffmpeg = new FFmpeg();
 
-      const coreBase = "https://unpkg.com/@ffmpeg/core@0.12.9/dist/esm";
+      // Capture FFmpeg's internal logs so we can surface real errors
+      ffmpeg.on("log", ({ message }) => {
+        ffmpegLogs.push(message);
+        if (process.env.NODE_ENV === "development") console.log("[ffmpeg]", message);
+      });
 
-      // Build an absolute URL so `new URL(classWorkerURL, import.meta.url)`
-      // in classes.js ignores import.meta.url entirely (webpack resolves it
-      // to a file:// path at build time, which breaks relative resolution).
-      const workerURL = window.location.origin + "/ffmpeg-esm/worker.js";
+      const origin    = window.location.origin;
+      const coreBase  = "https://unpkg.com/@ffmpeg/core@0.12.9/dist/esm";
 
+      // classWorkerURL must be an absolute URL — import.meta.url in the
+      // webpack bundle resolves to a file:// path on Vercel, which would
+      // corrupt a relative URL inside new URL(relative, import.meta.url).
       await ffmpeg.load({
-        classWorkerURL: workerURL,
-        coreURL:  await toBlobURL(`${coreBase}/ffmpeg-core.js`,   "text/javascript"),
-        wasmURL:  await toBlobURL(`${coreBase}/ffmpeg-core.wasm`, "application/wasm"),
+        classWorkerURL: `${origin}/ffmpeg-esm/worker.js`,
+        coreURL:        await toBlobURL(`${coreBase}/ffmpeg-core.js`,   "text/javascript"),
+        wasmURL:        await toBlobURL(`${coreBase}/ffmpeg-core.wasm`, "application/wasm"),
       });
 
       if (cancelled.current) return;
 
-      // ── 2. Fetch background music ──────────────────────────────────────
+      // ── 2. Load font for subtitle rendering ───────────────────────────
+      //
+      // FFmpeg WASM has no system fonts.  drawtext REQUIRES fontfile=
+      // or it will error out and never write output.mp4 → ErrnoError.
+      // We serve Geist-Regular.ttf from /public/ffmpeg-esm/ (123 KB).
+      //
+      setStatusText("Loading assets…");
+      setProgress(8);
+
+      let hasFontFile = false;
+      try {
+        const fontResp = await fetch(`${origin}/ffmpeg-esm/font.ttf`);
+        if (fontResp.ok) {
+          await ffmpeg.writeFile("font.ttf", new Uint8Array(await fontResp.arrayBuffer()));
+          hasFontFile = true;
+        }
+      } catch {
+        // Font unavailable — subtitles will be skipped gracefully
+      }
+
+      // ── 3. Fetch background music ──────────────────────────────────────
       setStatusText("Fetching music…");
       setProgress(12);
 
       let audioData: Uint8Array | null = null;
       try {
         const musicRes = await fetch(`/api/music?mood=${encodeURIComponent(mood)}`);
-        if (musicRes.ok) {
-          audioData = new Uint8Array(await musicRes.arrayBuffer());
-        }
+        if (musicRes.ok) audioData = new Uint8Array(await musicRes.arrayBuffer());
       } catch {
-        // No music — create silent reel (still valid)
+        // No music — silent reel is still valid
       }
 
       if (cancelled.current) return;
 
-      // ── 3. Write all files to WASM virtual FS ─────────────────────────
+      // ── 4. Write image files to WASM virtual FS ───────────────────────
       setStatusText("Preparing photos…");
       setProgress(18);
 
       for (let i = 0; i < images.length; i++) {
         await ffmpeg.writeFile(`img${i}.jpg`, dataUrlToUint8Array(images[i]));
       }
-      if (audioData) {
-        await ffmpeg.writeFile("music.mp3", audioData);
-      }
+      if (audioData) await ffmpeg.writeFile("music.mp3", audioData);
 
       if (cancelled.current) return;
 
-      // ── 4. Build filter_complex ────────────────────────────────────────
+      // ── 5. Build filter_complex ────────────────────────────────────────
       const FPS       = 25;
       const SECS      = 3;
-      const FRAMES    = FPS * SECS;                  // 75 frames per photo
+      const FRAMES    = FPS * SECS;   // 75 frames per photo
       const FADE_SECS = 0.5;
       const N         = images.length;
-      const subtitle  = buildSubtitleText(caption);
+      const subtitle  = hasFontFile ? buildSubtitleText(caption) : "";
 
       const filterParts: string[] = [];
 
@@ -156,12 +159,13 @@ export default function ReelCreator({ images, caption, mood, onComplete, onError
         );
       }
 
+      // Chain xfade transitions between clips
       if (N === 1) {
         filterParts.push(`[v0]null[vmerge]`);
       } else {
         let prevLabel = "v0";
         for (let i = 1; i < N; i++) {
-          const offset = (i * (SECS - FADE_SECS)).toFixed(2);
+          const offset   = (i * (SECS - FADE_SECS)).toFixed(2);
           const outLabel = i === N - 1 ? "vmerge" : `xt${i}`;
           filterParts.push(
             `[${prevLabel}][v${i}]xfade=transition=fade:duration=${FADE_SECS}:offset=${offset}[${outLabel}]`
@@ -170,9 +174,11 @@ export default function ReelCreator({ images, caption, mood, onComplete, onError
         }
       }
 
+      // Subtitle overlay — only if font loaded successfully
       if (subtitle) {
         filterParts.push(
           `[vmerge]drawtext=` +
+          `fontfile=font.ttf:` +
           `text='${subtitle}':` +
           `fontsize=38:fontcolor=white:` +
           `x=(w-text_w)/2:y=h-130:` +
@@ -213,7 +219,7 @@ export default function ReelCreator({ images, caption, mood, onComplete, onError
         "output.mp4",
       ];
 
-      // ── 5. Run FFmpeg with progress tracking ─────────────────────────
+      // ── 6. Run FFmpeg ──────────────────────────────────────────────────
       setStatusText("Creating your Reel…");
       setProgress(22);
 
@@ -225,24 +231,40 @@ export default function ReelCreator({ images, caption, mood, onComplete, onError
         }
       });
 
-      await ffmpeg.exec(cmd);
+      const exitCode = await ffmpeg.exec(cmd);
 
       if (cancelled.current) return;
 
-      // ── 6. Read output and deliver ────────────────────────────────────
+      if (exitCode !== 0) {
+        // Scan logs for the first meaningful error line
+        const errLine = ffmpegLogs
+          .filter(l => /error|invalid|failed|no such/i.test(l))
+          .slice(-3)
+          .join(" | ");
+        throw new Error(
+          `FFmpeg exited with code ${exitCode}.${errLine ? " " + errLine : ""}`
+        );
+      }
+
+      // ── 7. Read output and deliver ────────────────────────────────────
       setStatusText("Finishing…");
       setProgress(97);
 
       const rawOut = await ffmpeg.readFile("output.mp4") as Uint8Array;
-      const plain = rawOut.buffer.slice(0) as ArrayBuffer;
-      const blob = new Blob([plain], { type: "video/mp4" });
+      const plain  = rawOut.buffer.slice(0) as ArrayBuffer;
+      const blob   = new Blob([plain], { type: "video/mp4" });
 
       setProgress(100);
       onComplete(blob);
 
     } catch (err) {
       if (!cancelled.current) {
-        onError(err instanceof Error ? err.message : String(err));
+        // Attach last FFmpeg log lines to ErrnoError / generic errors for debugging
+        const base  = err instanceof Error ? err.message : String(err);
+        const extra = ffmpegLogs.length
+          ? "\n\nFFmpeg log:\n" + ffmpegLogs.slice(-6).join("\n")
+          : "";
+        onError(base + extra);
       }
     }
   }, [images, caption, mood, onComplete, onError]);
