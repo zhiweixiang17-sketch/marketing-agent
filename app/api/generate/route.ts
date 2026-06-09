@@ -21,7 +21,7 @@ const toneDescriptions: Record<string, string> = {
 
 // Formats that produce a single structured output regardless of platform.
 // "Both" platform is only meaningful for feed post and reel.
-const SINGLE_PLATFORM_FORMATS = new Set(["story", "reel script"]);
+const SINGLE_PLATFORM_FORMATS = new Set(["story", "reel script", "voice-reel"]);
 
 export async function POST(req: Request) {
   const { topic, format, platform } = await req.json();
@@ -75,6 +75,22 @@ CTA
 [One soft closing line — question or invitation, 3–5 seconds. Never a hard sell.]
 
 Write everything as spoken language — contractions, natural rhythm.`,
+
+    "voice-reel": `Write a 30-second spoken voiceover script for an Instagram Reel.
+The owner's voice will narrate over a photo slideshow.
+
+Output EXACTLY in this format with each header on its own line:
+
+HOOK
+[One bold opening line, 0-3 seconds spoken aloud. Punchy, immediate, sensory. Max 12 words.]
+
+INTRO
+[Warm, natural description — 15-20 seconds when read aloud. Conversational, intimate. Short sentences. Specific: vintage, grape, place, story. End with a natural pause.]
+
+CTA
+[Soft spoken invitation, 5-10 seconds. e.g. "Come visit us this weekend" or "Find the link in our bio." Never a hard sell.]
+
+Write for the spoken word — contractions, natural rhythm, zero marketing jargon.`,
 
     // Backward compatibility
     caption: `Write an engaging feed post caption. STRUCTURE:

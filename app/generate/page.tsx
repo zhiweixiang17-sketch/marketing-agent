@@ -5,8 +5,9 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { ReelMood } from "./ReelCreator";
 
-// Lazy-load the heavy FFmpeg component (only downloaded when used)
+// Lazy-load the heavy FFmpeg components (only downloaded when used)
 const ReelCreator = dynamic(() => import("./ReelCreator"), { ssr: false });
+const VoiceReelCreator = dynamic(() => import("./VoiceReelCreator"), { ssr: false });
 
 // ── Constants & types ─────────────────────────────────────────────────────────
 
@@ -15,6 +16,7 @@ const FORMATS = [
   { value: "reel",        label: "Reel"         },
   { value: "story",       label: "Story"        },
   { value: "reel script", label: "Reel Script"  },
+  { value: "voice-reel",  label: "Voice Reel"   },
 ] as const;
 
 type Format = (typeof FORMATS)[number]["value"];
@@ -25,7 +27,7 @@ type Platform = (typeof PLATFORMS)[number];
 const BOTH_COMPATIBLE = new Set<Format>(["feed post", "reel"]);
 
 // These formats always route through /review for section editing
-const NEEDS_REVIEW_FORMATS = new Set<Format>(["story", "reel script"]);
+const NEEDS_REVIEW_FORMATS = new Set<Format>(["story", "reel script", "voice-reel"]);
 
 const MOODS: { value: ReelMood; label: string; emoji: string }[] = [
   { value: "Upbeat",   label: "Upbeat",   emoji: "🎉" },
@@ -56,6 +58,16 @@ function parseGenericSections(text: string, keys: readonly string[]): Record<str
   if (current !== null) result[current] = buf.join("\n").trim();
   return result;
 }
+
+// Library voices for Voice Reel
+const LIBRARY_VOICES = [
+  { id: "21m00Tcm4TlvDq8ikWAM", name: "Rachel",  style: "Warm Female"           },
+  { id: "TxGEqnHWrfWFTfGW9XjX", name: "Josh",    style: "Warm Male"             },
+  { id: "EXAVITQu4vr4xnSDxMaL", name: "Bella",   style: "Authoritative Female"  },
+  { id: "VR6AewLTigWG4xSOukaG", name: "Arnold",  style: "Authoritative Male"    },
+  { id: "MF3mGyEYCl7XYWbV9V6O", name: "Elli",    style: "Enthusiastic Female"   },
+  { id: "ErXwobaYiN019PkySvjV", name: "Antoni",  style: "Enthusiastic Male"     },
+] as const;
 
 // Reel Script sections (Feature 2)
 const REEL_KEYS = ["HOOK", "SCRIPT", "ON-SCREEN TEXT", "CTA"] as const;
@@ -312,6 +324,54 @@ function ReelScriptPreview({ content, phase }: { content: string; phase: Phase }
       <div className="divide-y divide-gray-100">
         {REEL_META.map(({ key, label, icon, hint }, i) => {
           const text = sections[key];
+          const showCursor = phase === "generating" && i === lastFilledIdx;
+          return (
+            <div key={key} className="px-5 py-4">
+              <div className="flex items-center gap-1.5 mb-1.5">
+                <span className="text-sm select-none">{icon}</span>
+                <span className="text-xs font-semibold uppercase tracking-wider text-gray-500">{label}</span>
+                <span className="text-xs text-gray-300 mx-0.5">·</span>
+                <span className="text-xs text-gray-400">{hint}</span>
+              </div>
+              {text ? (
+                <p className="text-sm text-gray-800 whitespace-pre-wrap leading-relaxed">
+                  {text}{showCursor && <span className="inline-block w-0.5 h-4 bg-[#0F6E56] ml-0.5 animate-pulse align-middle" />}
+                </p>
+              ) : <p className="text-sm text-gray-300 italic">{phase === "idle" ? "—" : "Generating…"}</p>}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// Voice Reel keys and meta
+const VOICE_REEL_KEYS = ["HOOK", "INTRO", "CTA"] as const;
+type VoiceReelKey = (typeof VOICE_REEL_KEYS)[number];
+const VOICE_REEL_META = [
+  { key: "HOOK"  as VoiceReelKey, label: "Hook",         icon: "🎣", hint: "0-3 sec · punchy opener"    },
+  { key: "INTRO" as VoiceReelKey, label: "Introduction", icon: "🎙️", hint: "3-20 sec · warm story"       },
+  { key: "CTA"   as VoiceReelKey, label: "Call to Action", icon: "👋", hint: "20-30 sec · soft invitation" },
+];
+
+function parseVoiceReelScript(text: string): Record<VoiceReelKey, string> {
+  return parseGenericSections(text, VOICE_REEL_KEYS) as Record<VoiceReelKey, string>;
+}
+
+function VoiceReelScriptPreview({ content, phase }: { content: string; phase: Phase }) {
+  const voiceSections = parseVoiceReelScript(content);
+  const lastFilledIdx = VOICE_REEL_META.reduce((acc, m, i) => (voiceSections[m.key] ? i : acc), -1);
+  return (
+    <div className="bg-white rounded-2xl border border-gray-200 shadow-md overflow-hidden w-full">
+      <div className="px-5 py-4 border-b border-gray-100 flex items-center gap-3">
+        <div className="w-9 h-9 rounded-xl bg-[#0F6E56]/10 flex items-center justify-center text-lg select-none">🎤</div>
+        <div className="flex-1"><p className="text-sm font-semibold text-gray-900">Voice Reel Script</p><p className="text-xs text-gray-400">30-second voiceover</p></div>
+        {phase === "generating" && <Spinner className="h-4 w-4" />}
+      </div>
+      <div className="divide-y divide-gray-100">
+        {VOICE_REEL_META.map(({ key, label, icon, hint }, i) => {
+          const text = voiceSections[key];
           const showCursor = phase === "generating" && i === lastFilledIdx;
           return (
             <div key={key} className="px-5 py-4">
@@ -610,6 +670,10 @@ export default function GeneratePage() {
   const [approved, setApproved] = useState(false);
   const [editId, setEditId] = useState<string | null>(null); // set when re-generating an existing post
 
+  // Voice Reel state
+  const [voiceId, setVoiceId] = useState<string>("21m00Tcm4TlvDq8ikWAM");
+  const [voiceName, setVoiceName] = useState<string>("Rachel");
+
   // Photo-to-Reel state
   const [mood, setMood] = useState<ReelMood>("Calm");
   const [creatingReel, setCreatingReel] = useState(false);
@@ -620,6 +684,16 @@ export default function GeneratePage() {
 
   useEffect(() => {
     fetch("/api/brand").then(r => r.json()).then(d => setBrandName(d.business_name ?? "Your Business")).catch(() => {});
+
+    // Load saved voice settings from localStorage
+    try {
+      const saved = localStorage.getItem("voiceSettings");
+      if (saved) {
+        const v = JSON.parse(saved) as { voiceId: string; voiceName: string };
+        setVoiceId(v.voiceId);
+        setVoiceName(v.voiceName);
+      }
+    } catch { /* ignore */ }
 
     // Pre-fill form when coming from "Regenerate" on an existing post
     const regenRaw = sessionStorage.getItem("regenerate");
@@ -709,6 +783,8 @@ export default function GeneratePage() {
         content, topic, format, platform,
         ...imagePayload,
         videoMeta,
+        voiceId: format === "voice-reel" ? voiceId : undefined,
+        voiceName: format === "voice-reel" ? voiceName : undefined,
       }));
       router.push("/review");
       return;
@@ -767,6 +843,7 @@ export default function GeneratePage() {
   const previewLabel =
     isBothVersions           ? "Both Versions" :
     format === "reel script" ? "Script Preview" :
+    format === "voice-reel"  ? "Voice Reel Script" :
     format === "story"       ? "Story Preview" :
     isPhotoReel              ? "Reel Preview" :
     format === "reel"        ? "Reel Preview" :
@@ -789,6 +866,8 @@ export default function GeneratePage() {
     <BothPlatformsPreview content={content} phase={phase} />
   ) : format === "reel script" ? (
     <ReelScriptPreview content={content} phase={phase} />
+  ) : format === "voice-reel" ? (
+    <VoiceReelScriptPreview content={content} phase={phase} />
   ) : format === "story" ? (
     <StoryPreview content={content} phase={phase} />
   ) : format === "reel" ? (
@@ -801,6 +880,7 @@ export default function GeneratePage() {
 
   const approveButtonLabel = needsReview
     ? format === "reel script" ? "Review Script →"
+    : format === "voice-reel"  ? "Review Voice Script →"
     : format === "story"       ? "Review Story →"
     : images.length > 1        ? "Review Gallery →"
     : "Review Versions →"
@@ -907,7 +987,7 @@ export default function GeneratePage() {
               <label className="block text-sm font-medium text-gray-700 mb-2">Platform</label>
               <div className="flex gap-2 flex-wrap">
                 {PLATFORMS.map((p) => {
-                  const disabled = p === "both" && !BOTH_COMPATIBLE.has(format);
+                  const disabled = p === "both" && (!BOTH_COMPATIBLE.has(format) || format === "voice-reel");
                   return (
                     <button key={p} onClick={() => !disabled && setPlatform(p)}
                       disabled={disabled}
@@ -923,6 +1003,29 @@ export default function GeneratePage() {
                 <p className="text-xs text-gray-400 mt-1.5">Generates Instagram + Facebook versions — you&apos;ll review both before saving.</p>
               )}
             </div>
+
+            {/* Voice selector — shown for Voice Reel format */}
+            {format === "voice-reel" && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Voice</label>
+                <select
+                  value={voiceId}
+                  onChange={(e) => {
+                    const selected = LIBRARY_VOICES.find(v => v.id === e.target.value);
+                    setVoiceId(e.target.value);
+                    if (selected) setVoiceName(selected.name);
+                  }}
+                  className="w-full border border-gray-200 rounded-xl px-3.5 py-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#0F6E56]/25 focus:border-[#0F6E56] transition-colors bg-white"
+                >
+                  {LIBRARY_VOICES.map(v => (
+                    <option key={v.id} value={v.id}>{v.name} — {v.style}</option>
+                  ))}
+                </select>
+                <p className="text-xs text-gray-400 mt-1.5">
+                  <a href="/setup#voice" className="text-[#0F6E56] hover:underline">🎤 Clone your own voice in Setup →</a>
+                </p>
+              </div>
+            )}
 
             {/* Mood selector — shown when creating a Reel from photos */}
             {isPhotoReel && (

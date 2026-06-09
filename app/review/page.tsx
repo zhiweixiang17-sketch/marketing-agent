@@ -1,7 +1,10 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+
+const VoiceReelCreator = dynamic(() => import("../generate/VoiceReelCreator"), { ssr: false });
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -14,6 +17,8 @@ type Draft = {
   images?: string[] | null;
   imageDataUrl?: string | null;  // legacy / backward compat
   videoMeta?: { name: string; size: number; type: string } | null;
+  voiceId?: string;
+  voiceName?: string;
 };
 
 type SectionDef = {
@@ -46,6 +51,13 @@ function getSectionDefs(format: string, platform: string): SectionDef[] | null {
     return [
       { key: "TEXT", label: "Story Text", icon: "📱", hint: "Bold statement or question · under 10 words", rows: 2 },
       { key: "POLL", label: "Poll",       icon: "🗳️", hint: "Question + two options",                     rows: 3 },
+    ];
+  }
+  if (format === "voice-reel") {
+    return [
+      { key: "HOOK",  label: "Hook",          icon: "🎣", hint: "0-3 sec · punchy opener",      rows: 2 },
+      { key: "INTRO", label: "Introduction",  icon: "🎙️", hint: "3-20 sec · warm story",         rows: 6 },
+      { key: "CTA",   label: "Call to Action", icon: "👋", hint: "20-30 sec · soft invitation",   rows: 2 },
     ];
   }
   return null; // single textarea for feed post, reel
@@ -171,6 +183,15 @@ export default function ReviewPage() {
   const [saving, setSaving] = useState(false);
   const [approved, setApproved] = useState(false);
 
+  // Voice Reel state
+  const [generatingVoice, setGeneratingVoice] = useState(false);
+  const [voiceError, setVoiceError] = useState<string | null>(null);
+  const [voiceBlob, setVoiceBlob] = useState<Blob | null>(null);
+  const [voiceoverData, setVoiceoverData] = useState<Uint8Array | null>(null);
+  const [creatingVoiceReel, setCreatingVoiceReel] = useState(false);
+  const [voiceReelBlob, setVoiceReelBlob] = useState<Blob | null>(null);
+  const [voiceReelUrl, setVoiceReelUrl] = useState<string | null>(null);
+
   useEffect(() => {
     const raw = sessionStorage.getItem("draft");
     if (raw) {
@@ -211,6 +232,7 @@ export default function ReviewPage() {
   // Heading
   const pageTitle =
     draft.format === "reel script" ? (isEditing ? "Edit Reel Script"  : "Review Reel Script") :
+    draft.format === "voice-reel"  ? (isEditing ? "Edit Voice Reel"   : "Review Voice Reel") :
     draft.format === "story"       ? (isEditing ? "Edit Story"         : "Review Story") :
     isBoth                         ? (isEditing ? "Edit Both Versions" : "Review Both Versions") :
     photoImages.length > 1         ? (isEditing ? "Edit Gallery Post"  : "Review Gallery Post") :
@@ -224,6 +246,33 @@ export default function ReviewPage() {
 
   // Build copy text (same as final content)
   const copyText = buildFinalContent();
+
+  async function handleGenerateVoice() {
+    if (!draft || generatingVoice) return;
+    setGeneratingVoice(true);
+    setVoiceError(null);
+    try {
+      const fullScript = defs ? reconstructSections(defs, sections) : content;
+      const res = await fetch("/api/voice", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ voiceId: draft.voiceId, text: fullScript }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error((err as { error?: string }).error ?? `Voice API error ${res.status}`);
+      }
+      const blob = await res.blob();
+      const arrayBuf = await blob.arrayBuffer();
+      setVoiceBlob(blob);
+      setVoiceoverData(new Uint8Array(arrayBuf));
+      setCreatingVoiceReel(true);
+    } catch (e) {
+      setVoiceError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setGeneratingVoice(false);
+    }
+  }
 
   async function handleApprove() {
     if (!draft || saving) return;
@@ -334,10 +383,51 @@ export default function ReviewPage() {
             text={copyText}
             label={
               draft.format === "reel script" ? "Copy Script" :
+              draft.format === "voice-reel"  ? "Copy Script" :
               isBoth                         ? "Copy Both Versions" :
               "Copy"
             }
           />
+
+          {/* Voice Reel generation controls */}
+          {draft.format === "voice-reel" && (
+            <>
+              <button
+                onClick={handleGenerateVoice}
+                disabled={generatingVoice}
+                className="flex items-center gap-2 px-5 py-2.5 bg-[#0F6E56] text-white rounded-xl text-sm font-medium hover:bg-[#0A5A45] disabled:opacity-50 transition-colors shadow-sm"
+              >
+                {generatingVoice ? (
+                  <>
+                    <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                    </svg>
+                    Generating voice…
+                  </>
+                ) : (
+                  "🎤 Generate Voice Reel"
+                )}
+              </button>
+              <span className="text-xs text-gray-400">Voice: {draft.voiceName ?? "Selected voice"}</span>
+              {voiceError && (
+                <p className="w-full text-xs text-red-600 bg-red-50 border border-red-200 rounded-xl px-3 py-2">{voiceError}</p>
+              )}
+              {voiceReelUrl && (
+                <button
+                  onClick={() => {
+                    const a = document.createElement("a");
+                    a.href = voiceReelUrl;
+                    a.download = `voice-reel-${Date.now()}.mp4`;
+                    a.click();
+                  }}
+                  className="flex items-center gap-2 px-5 py-2.5 bg-white border border-[#0F6E56] text-[#0F6E56] rounded-xl text-sm font-medium hover:bg-[#E8F5F1] transition-colors shadow-sm"
+                >
+                  ⬇ Download Voice Reel
+                </button>
+              )}
+            </>
+          )}
 
           {isEditing ? (
             <>
@@ -388,6 +478,47 @@ export default function ReviewPage() {
           )}
         </div>
       </div>
+
+      {/* VoiceReelCreator — renders when voice has been generated */}
+      {creatingVoiceReel && voiceBlob && voiceoverData && (
+        <div className="mt-6">
+          <VoiceReelCreator
+            images={photoImages.length > 0 ? photoImages : ["/placeholder.jpg"]}
+            voiceoverData={voiceoverData}
+            hookText={sections["HOOK"] ?? ""}
+            mood="Calm"
+            onComplete={(blob) => {
+              const url = URL.createObjectURL(blob);
+              setVoiceReelBlob(blob);
+              setVoiceReelUrl(url);
+              setCreatingVoiceReel(false);
+            }}
+            onError={(msg) => { setVoiceError(msg); setCreatingVoiceReel(false); }}
+            onCancel={() => setCreatingVoiceReel(false)}
+          />
+        </div>
+      )}
+
+      {/* Generated voice reel video player + download */}
+      {voiceReelUrl && (
+        <div className="mt-6 bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+          <video src={voiceReelUrl} className="w-full max-h-96 bg-black" controls />
+          <div className="px-5 py-4 flex gap-3 items-center">
+            <button
+              onClick={() => {
+                const a = document.createElement("a");
+                a.href = voiceReelUrl;
+                a.download = `voice-reel-${Date.now()}.mp4`;
+                a.click();
+              }}
+              className="px-5 py-2.5 bg-[#0F6E56] text-white rounded-xl text-sm font-medium hover:bg-[#0A5A45] transition-colors shadow-sm"
+            >
+              ⬇ Download Voice Reel
+            </button>
+            <p className="text-xs text-gray-400">Ready for Instagram Reels · 1080×1920 · MP4</p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
