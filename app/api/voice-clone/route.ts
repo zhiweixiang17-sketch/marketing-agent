@@ -1,10 +1,11 @@
 export async function POST(req: Request) {
-  const apiKey = process.env.ELEVENLABS_API_KEY;
+  const apiKey = process.env.ELEVENLABS_API_KEY?.trim();
   if (!apiKey) {
-    return Response.json(
-      { error: "ElevenLabs API key is not configured.", setup: "Add ELEVENLABS_API_KEY to Vercel env vars." },
-      { status: 400 }
-    );
+    const hint =
+      process.env.ELEVENLABS_API_KEY !== undefined
+        ? "ELEVENLABS_API_KEY is set but empty — paste the actual key value in Vercel, then redeploy."
+        : "ELEVENLABS_API_KEY is not set. Add it in Vercel → Settings → Environment Variables, then redeploy.";
+    return Response.json({ error: hint }, { status: 400 });
   }
 
   const formData = await req.formData();
