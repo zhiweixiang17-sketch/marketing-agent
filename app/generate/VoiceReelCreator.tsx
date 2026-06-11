@@ -129,8 +129,10 @@ export default function VoiceReelCreator({ images, voiceoverData, hookText, mood
         await ffmpeg.writeFile(`img${i}.jpg`, dataUrlToUint8Array(images[i]));
       }
       // Voice is input index N; music (if present) is index N+1
-      await ffmpeg.writeFile("voice.mp3", voiceoverData);
-      if (audioData) await ffmpeg.writeFile("music.mp3", audioData);
+      // .slice() copies the buffer — the original Uint8Array's ArrayBuffer gets
+      // detached after the first postMessage transfer, so we must copy it each run.
+      await ffmpeg.writeFile("voice.mp3", voiceoverData.slice());
+      if (audioData) await ffmpeg.writeFile("music.mp3", audioData.slice());
 
       if (cancelled.current) return;
 

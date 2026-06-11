@@ -128,7 +128,7 @@ export default function ReelCreator({ images, caption, mood, onComplete, onError
       for (let i = 0; i < images.length; i++) {
         await ffmpeg.writeFile(`img${i}.jpg`, dataUrlToUint8Array(images[i]));
       }
-      if (audioData) await ffmpeg.writeFile("music.mp3", audioData);
+      if (audioData) await ffmpeg.writeFile("music.mp3", audioData.slice());
 
       if (cancelled.current) return;
 
