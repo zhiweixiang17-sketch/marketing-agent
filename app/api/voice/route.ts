@@ -15,6 +15,21 @@ import path from "path";
 
 const execFileAsync = promisify(execFile);
 
+/** Resolve full path to ffmpeg — Node.js child_process doesn't inherit shell PATH. */
+function resolveFfmpeg(): string {
+  const candidates = [
+    "/opt/homebrew/bin/ffmpeg",  // Homebrew on Apple Silicon
+    "/usr/local/bin/ffmpeg",     // Homebrew on Intel
+    "/usr/bin/ffmpeg",           // system install
+  ];
+  for (const p of candidates) {
+    if (existsSync(p)) return p;
+  }
+  return "ffmpeg"; // last resort — hope it's in PATH
+}
+
+const FFMPEG = resolveFfmpeg();
+
 export async function POST(req: Request) {
   const { voiceId, text } = (await req.json()) as { voiceId: string; text: string };
 
@@ -28,11 +43,10 @@ export async function POST(req: Request) {
 
   try {
     // 1. Generate AIFF with macOS say command
-    //    -v  voice name   -r  speech rate (words/min)   -o  output file
     await execFileAsync("say", ["-v", voiceId, "-r", "150", "-o", aiffPath, text]);
 
     // 2. Convert AIFF → MP3 with system ffmpeg
-    await execFileAsync("ffmpeg", [
+    await execFileAsync(FFMPEG, [
       "-i",        aiffPath,
       "-codec:a",  "libmp3lame",
       "-qscale:a", "2",
@@ -49,7 +63,6 @@ export async function POST(req: Request) {
     const msg = err instanceof Error ? err.message : String(err);
     return Response.json({ error: `TTS failed: ${msg}` }, { status: 500 });
   } finally {
-    // Clean up temp files
     if (existsSync(aiffPath)) try { unlinkSync(aiffPath); } catch { /* ignore */ }
     if (existsSync(mp3Path))  try { unlinkSync(mp3Path);  } catch { /* ignore */ }
   }
