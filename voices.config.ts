@@ -1,28 +1,56 @@
 /**
  * voices.config.ts
  *
- * Six macOS built-in voices for the voiceover feature.
- * Generated server-side with the macOS `say` command — no external API needed.
- *
- * id  = the exact name passed to `say -v <id>`
+ * Six ElevenLabs premade voices, hand-picked from GET /v1/voices.
+ * All are "premade" category — available on every ElevenLabs plan.
  */
 
 export type VoiceEntry = {
-  id: string;    // macOS voice name (passed to `say -v`)
-  name: string;  // display name
-  label: string; // style label shown in the UI card
+  id: string;    // ElevenLabs voice_id
+  name: string;
+  label: string;
   description: string;
 };
 
 export const VOICE_LIBRARY: VoiceEntry[] = [
-  { id: "Samantha", name: "Samantha", label: "Warm Female",          description: "Friendly and approachable, great for lifestyle brands"   },
-  { id: "Alex",     name: "Alex",     label: "Warm Male",            description: "Calm and trustworthy, ideal for heritage producers"       },
-  { id: "Victoria", name: "Victoria", label: "Authoritative Female", description: "Confident and polished, perfect for premium brands"       },
-  { id: "Fred",     name: "Fred",     label: "Authoritative Male",   description: "Deep and credible, commands instant attention"            },
-  { id: "Karen",    name: "Karen",    label: "Enthusiastic Female",  description: "Energetic and warm, great for events and launches"        },
-  { id: "Daniel",   name: "Daniel",   label: "Enthusiastic Male",    description: "Upbeat and engaging, drives action and excitement"        },
+  {
+    id: "hpp4J3VqNfWAUOO0d1Us",
+    name: "Bella",
+    label: "Warm Female",
+    description: "Professional, bright, and warm — great for lifestyle brands",
+  },
+  {
+    id: "JBFqnCBsd6RMkjVDRZzb",
+    name: "George",
+    label: "Warm Male",
+    description: "Captivating storyteller — ideal for heritage producers",
+  },
+  {
+    id: "XrExE9yKIg1WjnnlVkGX",
+    name: "Matilda",
+    label: "Authoritative Female",
+    description: "Knowledgeable and professional — perfect for premium brands",
+  },
+  {
+    id: "nPczCjzI2devNBz1zQrb",
+    name: "Brian",
+    label: "Authoritative Male",
+    description: "Deep, resonant and comforting — commands instant trust",
+  },
+  {
+    id: "FGY2WhTYpPnrIDTdsKH5",
+    name: "Laura",
+    label: "Enthusiastic Female",
+    description: "Energetic and quirky — great for events and new releases",
+  },
+  {
+    id: "IKne3meq5aSn9XLyUdCD",
+    name: "Charlie",
+    label: "Enthusiastic Male",
+    description: "Confident and energetic — drives excitement and action",
+  },
 ];
 
 /** Sample sentence played when the owner clicks ▶ Play on a voice card. */
 export const VOICE_SAMPLE_TEXT =
-  "Welcome to our winery. Let me tell you about today's featured wine.";
+  "Welcome to our winery. Today I want to tell you about our latest vintage — I think you're going to love it.";

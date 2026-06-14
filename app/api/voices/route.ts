@@ -1,7 +1,8 @@
 /**
  * GET /api/voices
  *
- * Returns the six macOS built-in voices — no external API needed.
+ * Returns the six hand-picked ElevenLabs premade voices from voices.config.ts.
+ * All voices are "premade" category — available on every ElevenLabs plan.
  */
 
 import { VOICE_LIBRARY } from "@/voices.config";
